@@ -67,6 +67,63 @@
 </div>
 
 Dify 是一个开源的 LLM 应用开发平台。其直观的界面结合了 AI 工作流、RAG 管道、Agent、模型管理、可观测性功能等，让您可以快速从原型到生产。以下是其核心功能列表：
+
+## 本次二开内容
+
+本仓库基于 [langgenius/dify](https://github.com/langgenius/dify)，增量是 **多工作区（多租户）生命周期 + 给账号分配租户权限**。
+
+**模型约定：工作区就是租户（Tenant == Workspace）。** 没有新增 Organization / Space，也没有 `/workspaces/:id` 独立路由。应用、知识库、成员、角色都挂在某一个工作区上。
+
+详细说明：[工作区与租户权限](./workspaces.md) · [English](../workspaces.md)
+
+### 做了什么
+
+1. **工作区生命周期**
+   - 创建多个工作区并切换
+   - 所有者归档 / 从「已归档」恢复
+   - 非所有者离开工作区
+   - 最后一个工作区不能归档；所有者不能直接离开，需先转让
+
+2. **成员与租户权限**
+   - 设置 → 成员 → **添加**（只保留一个入口）
+   - **立即加入**：已有账号马上进工作区；新账号填密码即可登录
+   - **发送邀请**：走原来的邮件 / 激活链接
+   - 可分配角色：`admin` / `editor` / `normal` / `dataset_operator`（Owner 走转让，不能在添加里指定）
+
+3. **运营侧**
+   - `ADMIN_API_KEY` 管理全部工作区、账号、成员关系
+   - CLI：`difyctl get/create/archive/unarchive all-workspace`、`all-account`、`all-workspace-member`
+
+4. **接口**
+   - 用户：`/console/api/workspaces`（含 create / archive / unarchive / leave / members）
+   - 用户 OpenAPI：`/openapi/v1/workspaces`
+   - 运营：`/console/api/all-workspaces`、`/console/api/all-accounts`
+
+5. **其它**
+   - 工作区切换时取消中的请求不再弹出 Next.js `AbortError` 红框
+   - 归档工作区不再跑 trigger / webhook / 定时任务
+
+### 本地怎么开
+
+```bash
+# api/.env
+ALLOW_CREATE_WORKSPACE=true
+ADMIN_API_KEY=your-operator-key
+```
+
+重启 API。左侧工作区菜单可创建 / 归档；**工作区设置 → 成员 → 添加** 可分配租户权限。
+
+```bash
+export DIFY_ADMIN_API_KEY=your-operator-key
+difyctl get all-workspaces
+difyctl create all-account --email user@example.com --name User --password Passw0rd1
+difyctl create all-workspace-member -w <工作区ID> --email user@example.com --role editor
+```
+
+带 `ADMIN_API_KEY` 时不要同时带登录 Cookie，否则 Cookie JWT 会盖住运营密钥。
+
+企业版许可证的工作区数、席位检查仍然有效。
+
 </br> </br>
 
 **1. 工作流**:

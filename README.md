@@ -62,6 +62,42 @@
 
 Dify is an open-source LLM app development platform. Its intuitive interface combines AI workflow, RAG pipeline, agent capabilities, model management, observability features (including [Opik](https://www.comet.com/docs/opik/integrations/dify), [Langfuse](https://docs.langfuse.com), and [Arize Phoenix](https://docs.arize.com/phoenix)) and more, letting you quickly go from prototype to production. Here's a list of the core features:
 
+## Customizations in this fork
+
+This repository is based on [langgenius/dify](https://github.com/langgenius/dify). The extra work is **multi-workspace (tenant) lifecycle and tenant access assignment**. A workspace **is** a tenant — there is no new Organization / Space entity and no `/workspaces/:id` route.
+
+Full guide: [docs/workspaces.md](./docs/workspaces.md) · [中文说明](./docs/zh-CN/workspaces.md)
+
+### What changed
+
+| Area | What you can do |
+| --- | --- |
+| Workspace lifecycle | Create extra workspaces, switch, archive, restore, leave. Last workspace cannot be archived. Owners restore from the Archived section. |
+| Members | One **Add** button. **Join immediately** creates or reuses an account and writes membership now. **Send invitation** keeps the email / activation-link flow. |
+| Roles | `admin` / `editor` / `normal` / `dataset_operator`. Owner is transferred, not assigned. |
+| Operator | `ADMIN_API_KEY` APIs and `difyctl` `all-*` commands list/create workspaces, accounts, and memberships. |
+| Console / OpenAPI | User APIs under `/console/api/workspaces` and `/openapi/v1/workspaces`. Operator APIs under `/console/api/all-workspaces` and `/console/api/all-accounts`. |
+| Web client | Cancelled in-flight fetches no longer surface as a Next.js `AbortError` overlay. |
+
+### Enable locally
+
+```bash
+# api/.env
+ALLOW_CREATE_WORKSPACE=true
+ADMIN_API_KEY=your-operator-key
+```
+
+Restart the API, then open the workspace menu to create/archive, or **Workspace settings → Members → Add** to grant tenant access.
+
+```bash
+export DIFY_ADMIN_API_KEY=your-operator-key
+difyctl get all-workspaces
+difyctl create all-account --email user@example.com --name User --password Passw0rd1
+difyctl create all-workspace-member -w <workspace-id> --email user@example.com --role editor
+```
+
+Do not send a user login cookie together with `Authorization: Bearer <ADMIN_API_KEY>` — the cookie JWT shadows the admin key.
+
 ## Quick start
 
 > Before installing Dify, make sure your machine meets the following minimum system requirements:

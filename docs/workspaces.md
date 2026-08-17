@@ -1,5 +1,7 @@
 # Workspaces and tenant access
 
+> This is the customization added in this fork. See [Customizations in this fork](../README.md#customizations-in-this-fork) for the summary.
+
 In Dify, a **workspace is a tenant**. There is no separate organization or space layer. Apps, knowledge, members, and roles all belong to one workspace.
 
 ## Concepts
