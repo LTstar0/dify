@@ -10,7 +10,13 @@ from flask import Flask
 from flask.views import MethodView
 
 from controllers.openapi import bp as openapi_bp
-from controllers.openapi.workspaces import WorkspaceByIdApi, WorkspacesApi
+from controllers.openapi.workspaces import (
+    WorkspaceArchiveApi,
+    WorkspaceByIdApi,
+    WorkspaceLeaveApi,
+    WorkspacesApi,
+    WorkspaceUnarchiveApi,
+)
 
 if not hasattr(builtins, "MethodView"):
     builtins.MethodView = MethodView  # type: ignore[attr-defined]
@@ -37,6 +43,7 @@ def test_workspaces_list_dispatches_to_workspaces_api(openapi_app: Flask):
     rule = _rule(openapi_app, "/openapi/v1/workspaces")
     assert openapi_app.view_functions[rule.endpoint].view_class is WorkspacesApi
     assert "GET" in rule.methods
+    assert "POST" in rule.methods
 
 
 def test_workspace_by_id_route_registered(openapi_app: Flask):
@@ -48,6 +55,24 @@ def test_workspace_by_id_dispatches_to_correct_class(openapi_app: Flask):
     rule = _rule(openapi_app, "/openapi/v1/workspaces/<string:workspace_id>")
     assert openapi_app.view_functions[rule.endpoint].view_class is WorkspaceByIdApi
     assert "GET" in rule.methods
+
+
+def test_workspace_archive_route_registered(openapi_app: Flask):
+    rule = _rule(openapi_app, "/openapi/v1/workspaces/<string:workspace_id>:archive")
+    assert openapi_app.view_functions[rule.endpoint].view_class is WorkspaceArchiveApi
+    assert "POST" in rule.methods
+
+
+def test_workspace_leave_route_registered(openapi_app: Flask):
+    rule = _rule(openapi_app, "/openapi/v1/workspaces/<string:workspace_id>:leave")
+    assert openapi_app.view_functions[rule.endpoint].view_class is WorkspaceLeaveApi
+    assert "POST" in rule.methods
+
+
+def test_workspace_unarchive_route_registered(openapi_app: Flask):
+    rule = _rule(openapi_app, "/openapi/v1/workspaces/<string:workspace_id>:unarchive")
+    assert openapi_app.view_functions[rule.endpoint].view_class is WorkspaceUnarchiveApi
+    assert "POST" in rule.methods
 
 
 def test_console_legacy_workspaces_route_not_remounted_on_openapi(openapi_app: Flask):

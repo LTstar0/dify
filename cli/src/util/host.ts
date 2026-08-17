@@ -8,6 +8,10 @@ export function openAPIBase(host: string): string {
   return `${host.replace(/\/+$/, '')}/openapi/v1/`
 }
 
+export function consoleBase(host: string): string {
+  return `${host.replace(/\/+$/, '')}/console/api/`
+}
+
 export type ResolveHostOptions = {
   raw: string
   insecure: boolean

@@ -112,6 +112,11 @@ class WebhookService:
             if not webhook_trigger:
                 raise ValueError(f"Webhook not found: {webhook_id}")
 
+            from services.account_service import TenantService
+
+            if TenantService.is_tenant_archived(webhook_trigger.tenant_id, session=session):
+                raise ValueError(f"Webhook not found: {webhook_id}")
+
             if is_debug:
                 workflow = session.scalar(
                     select(Workflow)
@@ -807,6 +812,16 @@ class WebhookService:
             Exception: If workflow execution fails
         """
         try:
+            from services.account_service import TenantService
+
+            if TenantService.is_tenant_archived(webhook_trigger.tenant_id):
+                logger.info(
+                    "Skipping webhook trigger %s for archived workspace %s",
+                    webhook_trigger.webhook_id,
+                    webhook_trigger.tenant_id,
+                )
+                return
+
             workflow_inputs = cls.build_workflow_inputs(webhook_data)
 
             trigger_data = WebhookTriggerData(

@@ -62,16 +62,24 @@ import {
   zPostOauthDeviceDenyResponse,
   zPostOauthDeviceTokenBody,
   zPostOauthDeviceTokenResponse,
+  zPostWorkspacesBody,
   zPostWorkspacesByWorkspaceIdAppsImportsBody,
   zPostWorkspacesByWorkspaceIdAppsImportsByImportIdConfirmPath,
   zPostWorkspacesByWorkspaceIdAppsImportsByImportIdConfirmResponse,
   zPostWorkspacesByWorkspaceIdAppsImportsPath,
   zPostWorkspacesByWorkspaceIdAppsImportsResponse,
+  zPostWorkspacesByWorkspaceIdArchivePath,
+  zPostWorkspacesByWorkspaceIdArchiveResponse,
+  zPostWorkspacesByWorkspaceIdLeavePath,
+  zPostWorkspacesByWorkspaceIdLeaveResponse,
   zPostWorkspacesByWorkspaceIdMembersBody,
   zPostWorkspacesByWorkspaceIdMembersPath,
   zPostWorkspacesByWorkspaceIdMembersResponse,
   zPostWorkspacesByWorkspaceIdSwitchPath,
   zPostWorkspacesByWorkspaceIdSwitchResponse,
+  zPostWorkspacesByWorkspaceIdUnarchivePath,
+  zPostWorkspacesByWorkspaceIdUnarchiveResponse,
+  zPostWorkspacesResponse,
 } from './zod.gen'
 
 export const get = oc
@@ -595,6 +603,36 @@ export const post12 = oc
   .route({
     inputStructure: 'detailed',
     method: 'POST',
+    operationId: 'postWorkspacesByWorkspaceIdArchive',
+    path: '/workspaces/{workspace_id}:archive',
+    tags: ['openapi'],
+  })
+  .input(z.object({ params: zPostWorkspacesByWorkspaceIdArchivePath }))
+  .output(zPostWorkspacesByWorkspaceIdArchiveResponse)
+
+export const archive = {
+  post: post12,
+}
+
+export const post13 = oc
+  .route({
+    inputStructure: 'detailed',
+    method: 'POST',
+    operationId: 'postWorkspacesByWorkspaceIdLeave',
+    path: '/workspaces/{workspace_id}:leave',
+    tags: ['openapi'],
+  })
+  .input(z.object({ params: zPostWorkspacesByWorkspaceIdLeavePath }))
+  .output(zPostWorkspacesByWorkspaceIdLeaveResponse)
+
+export const leave = {
+  post: post13,
+}
+
+export const post14 = oc
+  .route({
+    inputStructure: 'detailed',
+    method: 'POST',
     operationId: 'postWorkspacesByWorkspaceIdSwitch',
     path: '/workspaces/{workspace_id}:switch',
     tags: ['openapi'],
@@ -603,7 +641,22 @@ export const post12 = oc
   .output(zPostWorkspacesByWorkspaceIdSwitchResponse)
 
 export const switch_ = {
-  post: post12,
+  post: post14,
+}
+
+export const post15 = oc
+  .route({
+    inputStructure: 'detailed',
+    method: 'POST',
+    operationId: 'postWorkspacesByWorkspaceIdUnarchive',
+    path: '/workspaces/{workspace_id}:unarchive',
+    tags: ['openapi'],
+  })
+  .input(z.object({ params: zPostWorkspacesByWorkspaceIdUnarchivePath }))
+  .output(zPostWorkspacesByWorkspaceIdUnarchiveResponse)
+
+export const unarchive = {
+  post: post15,
 }
 
 export const get15 = oc
@@ -621,7 +674,10 @@ export const byWorkspaceId = {
   get: get15,
   apps: apps2,
   members,
+  archive,
+  leave,
   switch: switch_,
+  unarchive,
 }
 
 export const get16 = oc
@@ -634,8 +690,21 @@ export const get16 = oc
   })
   .output(zGetWorkspacesResponse)
 
+export const post16 = oc
+  .route({
+    inputStructure: 'detailed',
+    method: 'POST',
+    operationId: 'postWorkspaces',
+    path: '/workspaces',
+    successStatus: 201,
+    tags: ['openapi'],
+  })
+  .input(z.object({ body: zPostWorkspacesBody }))
+  .output(zPostWorkspacesResponse)
+
 export const workspaces = {
   get: get16,
+  post: post16,
   byWorkspaceId,
 }
 

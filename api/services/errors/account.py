@@ -67,3 +67,7 @@ class MemberNotInTenantError(BaseServiceError):
 
 class RoleAlreadyAssignedError(BaseServiceError):
     pass
+
+
+class AccountPasswordRequiredError(BaseServiceError):
+    pass

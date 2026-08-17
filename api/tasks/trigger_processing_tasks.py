@@ -242,6 +242,15 @@ def dispatch_triggered_workflow(
         event: The trigger entity that was activated
         request_id: The ID of the stored request in storage system
     """
+    from services.account_service import TenantService
+
+    if TenantService.is_tenant_archived(subscription.tenant_id):
+        logger.info(
+            "Skipping plugin trigger dispatch for archived workspace %s",
+            subscription.tenant_id,
+        )
+        return 0
+
     request = TriggerHttpRequestCachingService.get_request(request_id)
     payload = TriggerHttpRequestCachingService.get_payload(request_id)
 

@@ -100,6 +100,12 @@ def trigger_subscription_refresh(tenant_id: str, subscription_id: str) -> None:
                 logger.warning("Subscription not found: tenant=%s id=%s", tenant_id, subscription_id)
                 return
 
+            from services.account_service import TenantService
+
+            if TenantService.is_tenant_archived(tenant_id, session=session):
+                logger.info("Skipping subscription refresh for archived workspace %s", tenant_id)
+                return
+
             logger.debug(
                 "Loaded subscription: tenant=%s id=%s cred_exp=%s sub_exp=%s now=%s",
                 tenant_id,

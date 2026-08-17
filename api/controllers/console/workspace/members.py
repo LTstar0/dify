@@ -25,7 +25,10 @@ from controllers.console.auth.error import (
 )
 from controllers.console.error import EmailSendIpLimitError, SeatsLimitExceeded, WorkspaceMembersLimitExceeded
 from controllers.console.flask_admission import console_account_admission
-from controllers.console.workspace.error import InvalidMemberRoleError
+from controllers.console.workspace.error import (
+    AccountPasswordRequiredError,
+    InvalidMemberRoleError,
+)
 from controllers.console.wraps import (
     account_initialization_required,
     is_allow_transfer_owner,
@@ -43,7 +46,14 @@ from libs.login import login_required
 from machinery.context import RequestContext
 from models.account import Account, TenantAccountJoin, TenantAccountRole
 from services.account_service import AccountService, RegisterService, TenantService
-from services.errors.account import AccountAlreadyInTenantError
+from services.errors.account import (
+    AccountAlreadyInTenantError,
+    InvalidActionError,
+    NoPermissionError,
+)
+from services.errors.account import (
+    AccountPasswordRequiredError as AccountPasswordRequiredServiceError,
+)
 from services.feature_service import FeatureService
 
 
@@ -60,6 +70,27 @@ class MemberInvitePayload(BaseModel):
 
 class MemberRoleUpdatePayload(BaseModel):
     role: str
+
+
+class MemberAssignPayload(BaseModel):
+    email: str
+    role: str
+    name: str | None = None
+    password: str | None = None
+    language: str | None = None
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, email: str) -> str:
+        return email.strip().lower()
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, name: str | None) -> str | None:
+        if name is None:
+            return None
+        stripped = name.strip()
+        return stripped or None
 
 
 class OwnerTransferEmailPayload(BaseModel):
@@ -110,6 +141,14 @@ class MemberInviteResponse(ResponseModel):
     tenant_id: str
 
 
+class MemberAssignResponse(ResponseModel):
+    result: Literal["success"]
+    created_account: bool
+    added: bool
+    tenant_id: str
+    member: AccountWithRoleResponse
+
+
 class MemberInviteErrorResponse(ResponseModel):
     code: Literal["invalid_param", "invalid_role", "limit_exceeded"]
     message: str
@@ -119,6 +158,7 @@ class MemberInviteErrorResponse(ResponseModel):
 register_enum_models(console_ns, TenantAccountRole)
 register_schema_models(
     console_ns,
+    MemberAssignPayload,
     MemberInvitePayload,
     MemberRoleUpdatePayload,
     OwnerTransferEmailPayload,
@@ -130,6 +170,7 @@ register_response_schema_models(
     AccountWithRoleResponse,
     AccountWithRoleListResponse,
     MemberActionResponse,
+    MemberAssignResponse,
     MemberInviteErrorResponse,
     MemberInviteResponse,
     MemberInviteSuccessResponse,
@@ -221,6 +262,74 @@ class MemberListApi(Resource):
             for member in members
         ]
         return dump_response(AccountWithRoleListResponse, {"accounts": serialized_members}), HTTPStatus.OK
+
+    @console_ns.expect(console_ns.models[MemberAssignPayload.__name__])
+    @console_ns.response(HTTPStatus.CREATED, "Success", console_ns.models[MemberAssignResponse.__name__])
+    @setup_required
+    @login_required
+    @account_initialization_required
+    @with_current_user
+    def post(self, current_user: Account):
+        args = MemberAssignPayload.model_validate(console_ns.payload or {})
+        tenant = current_user.current_tenant
+        if tenant is None:
+            raise ValueError("No current tenant")
+        if not TenantAccountRole.is_valid_role(args.role) or not TenantAccountRole.is_non_owner_role(
+            TenantAccountRole(args.role)
+        ):
+            raise InvalidMemberRoleError()
+        if not _is_role_enabled(args.role, tenant.id):
+            raise InvalidMemberRoleError()
+
+        try:
+            account, created_account = AccountService.ensure_account_for_assignment(
+                email=args.email,
+                name=args.name,
+                password=args.password,
+                language=args.language or "en-US",
+                session=db.session(),
+            )
+            join, added = TenantService.assign_account_to_tenant(
+                tenant,
+                account,
+                args.role,
+                current_user,
+                session=db.session(),
+            )
+        except AccountPasswordRequiredServiceError as exc:
+            raise AccountPasswordRequiredError() from exc
+        except NoPermissionError as exc:
+            return {"code": "forbidden", "message": str(exc)}, HTTPStatus.FORBIDDEN
+        except InvalidActionError as exc:
+            raise InvalidMemberRoleError() from exc
+        except ValueError as exc:
+            return {"code": "invalid_param", "message": str(exc)}, HTTPStatus.BAD_REQUEST
+
+        account.role = join.role
+        return (
+            dump_response(
+                MemberAssignResponse,
+                {
+                    "result": "success",
+                    "created_account": created_account,
+                    "added": added,
+                    "tenant_id": tenant.id,
+                    "member": {
+                        "id": account.id,
+                        "name": account.name,
+                        "email": account.email,
+                        "avatar": account.avatar,
+                        "last_login_at": account.last_login_at,
+                        "last_active_at": account.last_active_at,
+                        "created_at": account.created_at,
+                        "role": account.role,
+                        "roles": [],
+                        "status": account.status,
+                    },
+                },
+            ),
+            HTTPStatus.CREATED,
+        )
 
 
 @console_ns.route("/workspaces/current/members/invite-email")

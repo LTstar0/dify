@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import type { Role } from '@/models/access-control'
 import type { Member } from '@/models/common'
 import type { ConsoleStateFixture } from '@/test/console/state-fixture'
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import { createMockProviderContextValue } from '@/__mocks__/provider-context'
@@ -32,11 +32,58 @@ vi.mock('@/hooks/use-format-time-from-now')
 vi.mock('@/service/access-control/use-member-roles')
 vi.mock('@/service/use-common')
 
-const renderMembersPage = () =>
-  renderWithConsoleQuery(<MembersPage />, {
+const mockFetchWorkspaces = vi.hoisted(() => vi.fn())
+
+vi.mock('@/service/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/service/client')>()
+  const workspacesQueryKey = ['console', 'workspaces', 'get'] as const
+  const consoleQuery = new Proxy(actual.consoleQuery, {
+    get(target, prop, receiver) {
+      if (prop === 'workspaces') {
+        return {
+          ...Reflect.get(target, prop, receiver),
+          get: {
+            queryKey: () => workspacesQueryKey,
+            queryOptions: (options?: object) => ({
+              queryKey: workspacesQueryKey,
+              queryFn: mockFetchWorkspaces,
+              ...options,
+            }),
+          },
+        }
+      }
+      return Reflect.get(target, prop, receiver)
+    },
+  })
+  return { ...actual, consoleQuery }
+})
+
+const twoWorkspaces = {
+  workspaces: [
+    {
+      id: 'workspace-1',
+      name: 'Test Workspace',
+      status: 'normal',
+      current: true,
+      is_owner: true,
+    },
+    {
+      id: 'workspace-2',
+      name: 'Other',
+      status: 'normal',
+      current: false,
+      is_owner: true,
+    },
+  ],
+}
+
+const renderMembersPage = (workspaces = twoWorkspaces) => {
+  mockFetchWorkspaces.mockResolvedValue(workspaces)
+  return renderWithConsoleQuery(<MembersPage />, {
     accountProfile: mockConsoleState.current.userProfile,
     systemFeatures: { is_email_setup: true },
   })
+}
 
 const getMemberDetailsButton = (memberId: string) =>
   within(screen.getByTestId(`member-row-${memberId}`)).getByRole('button', {
@@ -69,17 +116,19 @@ vi.mock('../edit-workspace-modal', () => ({
     </div>
   ),
 }))
-vi.mock('../invite-modal', () => ({
-  InviteModal: ({
+vi.mock('../add-member-dialog', () => ({
+  AddMemberDialog: ({
     open,
     trigger,
     onOpenChange,
-    onSend,
+    onAssigned,
+    onInvited,
   }: {
     open: boolean
     trigger: ReactElement<{ disabled?: boolean }>
     onOpenChange: (open: boolean) => void
-    onSend: (results: Array<{ email: string; status: 'success'; url: string }>) => void
+    onAssigned: () => void
+    onInvited: (results: Array<{ email: string; status: 'success'; url: string }>) => void
   }) => (
     <div>
       <button disabled={trigger.props.disabled} onClick={() => onOpenChange(true)}>
@@ -88,11 +137,25 @@ vi.mock('../invite-modal', () => ({
       {open && (
         <div>
           <div>Invite Modal</div>
-          <button onClick={() => onOpenChange(false)}>Close Invite Modal</button>
+          <button type="button" onClick={() => onOpenChange(false)}>
+            Close Invite Modal
+          </button>
           <button
+            type="button"
             onClick={() => {
               onOpenChange(false)
-              onSend([{ email: 'sent@example.com', status: 'success', url: 'http://invite/link' }])
+              onAssigned()
+            }}
+          >
+            Confirm Assign
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onOpenChange(false)
+              onInvited([
+                { email: 'sent@example.com', status: 'success', url: 'http://invite/link' },
+              ])
             }}
           >
             Send Invite Results
@@ -183,6 +246,15 @@ vi.mock('../member-details-modal', () => ({
 vi.mock('@/app/components/billing/upgrade-btn', () => ({
   default: () => <div>Upgrade Button</div>,
 }))
+vi.mock('@/app/components/main-nav/components/workspace-lifecycle-dialog', () => ({
+  WorkspaceLifecycleDialog: ({
+    action,
+    tenantId,
+  }: {
+    action: 'archive' | 'leave' | null
+    tenantId: string | null
+  }) => (action && tenantId ? <div>{`Lifecycle ${action} ${tenantId}`}</div> : null),
+}))
 
 describe('MembersPage', () => {
   const mockRefetch = vi.fn()
@@ -220,6 +292,7 @@ describe('MembersPage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockFetchWorkspaces.mockResolvedValue(twoWorkspaces)
 
     setConsoleState({
       userProfile: { email: 'owner@example.com' },
@@ -259,6 +332,18 @@ describe('MembersPage', () => {
     expect(screen.getByText('Test Workspace'))!.toBeInTheDocument()
     expect(screen.getByText('Owner User'))!.toBeInTheDocument()
     expect(screen.getByText('Admin User'))!.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Invite' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Assign tenant access' })).not.toBeInTheDocument()
+  })
+
+  it('assigns tenant access from the single add dialog and refreshes members', async () => {
+    const user = userEvent.setup()
+    renderMembersPage()
+
+    await user.click(screen.getByRole('button', { name: 'Invite' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm Assign' }))
+
+    expect(mockRefetch).toHaveBeenCalled()
   })
 
   it('should render fixed name column and flexible role column layout', () => {
@@ -351,6 +436,57 @@ describe('MembersPage', () => {
 
     expect(screen.queryByRole('button', { name: /invite/i })).not.toBeInTheDocument()
     expect(screen.queryByText('Transfer ownership')).not.toBeInTheDocument()
+  })
+
+  it('hides leave for the workspace owner and offers archive', async () => {
+    renderMembersPage()
+
+    expect(
+      screen.queryByRole('button', { name: /mainNav.workspace.leave/i }),
+    ).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /mainNav.workspace.archive/i })).toBeEnabled()
+    })
+  })
+
+  it('lets the owner archive the current workspace', async () => {
+    const user = userEvent.setup()
+    renderMembersPage()
+
+    await user.click(await screen.findByRole('button', { name: /mainNav.workspace.archive/i }))
+    expect(screen.getByText('Lifecycle archive workspace-1')).toBeInTheDocument()
+  })
+
+  it('disables archive when only one workspace remains', () => {
+    renderMembersPage({
+      workspaces: [
+        {
+          id: 'workspace-1',
+          name: 'Test Workspace',
+          status: 'normal',
+          current: true,
+          is_owner: true,
+        },
+      ],
+    })
+
+    expect(screen.getByRole('button', { name: /mainNav.workspace.archive/i })).toBeDisabled()
+  })
+
+  it('lets a non-owner leave the current workspace', async () => {
+    const user = userEvent.setup()
+    setConsoleState({
+      userProfile: { email: 'admin@example.com' },
+      currentWorkspace: { id: 'workspace-1', name: 'Test Workspace', role: 'admin' },
+      isCurrentWorkspaceOwner: false,
+      isCurrentWorkspaceManager: true,
+      workspacePermissionKeys: ['workspace.member.manage'],
+    } as unknown as ConsoleStateFixture)
+
+    renderMembersPage()
+
+    await user.click(screen.getByRole('button', { name: /mainNav.workspace.leave/i }))
+    expect(screen.getByText('Lifecycle leave workspace-1')).toBeInTheDocument()
   })
 
   it('should open and close edit workspace modal', async () => {

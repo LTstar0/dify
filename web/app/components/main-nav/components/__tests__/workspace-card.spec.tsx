@@ -20,14 +20,33 @@ import { WorkspaceCard } from '../workspace-card'
 
 const {
   mockFetchWorkspaces,
+  mockFetchWorkspacePolicy,
+  mockFetchArchivedWorkspaces,
   mockSwitchWorkspace,
+  mockCreateWorkspace,
+  mockArchiveWorkspace,
+  mockLeaveWorkspace,
+  mockUnarchiveWorkspace,
   mockCurrentWorkspaceQueryKey,
   mockWorkspacesQueryKey,
+  mockWorkspacePolicyQueryKey,
+  mockArchivedWorkspacesQueryKey,
 } = vi.hoisted(() => ({
   mockFetchWorkspaces: vi.fn(),
+  mockFetchWorkspacePolicy: vi.fn(),
+  mockFetchArchivedWorkspaces: vi.fn(),
   mockSwitchWorkspace: vi.fn(),
+  mockCreateWorkspace: vi.fn(),
+  mockArchiveWorkspace: vi.fn(),
+  mockLeaveWorkspace: vi.fn(),
+  mockUnarchiveWorkspace: vi.fn(),
   mockCurrentWorkspaceQueryKey: ['console', 'workspaces', 'current', 'summary', 'get'] as const,
   mockWorkspacesQueryKey: ['console', 'workspaces', 'get'] as const,
+  mockWorkspacePolicyQueryKey: ['console', 'workspaces', 'policy', 'get'] as const,
+  mockArchivedWorkspacesQueryKey: ['console', 'workspaces', 'archived', 'get'] as const,
+}))
+const toastMocks = vi.hoisted(() => ({
+  mockNotify: vi.fn(),
 }))
 const mockConsoleState = vi.hoisted(() => ({
   current: {
@@ -46,6 +65,18 @@ vi.mock('@/context/permission-state', async () => {
 
 vi.mock('@/context/modal-context', () => ({
   useModalContext: vi.fn(),
+}))
+
+vi.mock('@langgenius/dify-ui/toast', () => ({
+  default: {
+    notify: (args: unknown) => toastMocks.mockNotify(args),
+  },
+  toast: {
+    success: (message: string) => toastMocks.mockNotify({ type: 'success', message }),
+    error: (message: string) => toastMocks.mockNotify({ type: 'error', message }),
+    warning: (message: string) => toastMocks.mockNotify({ type: 'warning', message }),
+    info: (message: string) => toastMocks.mockNotify({ type: 'info', message }),
+  },
 }))
 
 vi.mock('@/service/client', async (importOriginal) => {
@@ -75,6 +106,52 @@ vi.mock('@/service/client', async (importOriginal) => {
               ...options,
             }),
           },
+          policy: {
+            get: {
+              queryKey: () => mockWorkspacePolicyQueryKey,
+              queryOptions: (options?: object) => ({
+                queryKey: mockWorkspacePolicyQueryKey,
+                queryFn: mockFetchWorkspacePolicy,
+                ...options,
+              }),
+            },
+          },
+          post: {
+            mutationOptions: () => ({
+              mutationFn: (variables: unknown) => mockCreateWorkspace(variables),
+            }),
+          },
+          archive: {
+            post: {
+              mutationOptions: () => ({
+                mutationFn: (variables: unknown) => mockArchiveWorkspace(variables),
+              }),
+            },
+          },
+          leave: {
+            post: {
+              mutationOptions: () => ({
+                mutationFn: (variables: unknown) => mockLeaveWorkspace(variables),
+              }),
+            },
+          },
+          archived: {
+            get: {
+              queryKey: () => mockArchivedWorkspacesQueryKey,
+              queryOptions: (options?: object) => ({
+                queryKey: mockArchivedWorkspacesQueryKey,
+                queryFn: mockFetchArchivedWorkspaces,
+                ...options,
+              }),
+            },
+          },
+          unarchive: {
+            post: {
+              mutationOptions: () => ({
+                mutationFn: (variables: unknown) => mockUnarchiveWorkspace(variables),
+              }),
+            },
+          },
           switch: {
             post: {
               mutationOptions: () => ({
@@ -101,6 +178,7 @@ const currentWorkspaceValue: GetWorkspacesCurrentSummaryResponse = {
   plan: 'sandbox',
   role: 'owner',
   credits: 7500,
+  is_owner: true,
 }
 
 const mockSetShowPricingModal = vi.fn()
@@ -109,8 +187,22 @@ vi.mock('nuqs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('nuqs')>()
   return { ...actual, useQueryState: () => [null, mockSetSettingsDestination] }
 })
+const disabledCreatePolicy = {
+  is_allow_create_workspace: false,
+  workspaces: { enabled: false, limit: 0, size: 0 },
+}
+const allowedCreatePolicy = {
+  is_allow_create_workspace: true,
+  workspaces: { enabled: false, limit: 0, size: 0 },
+}
+const exhaustedCreatePolicy = {
+  is_allow_create_workspace: true,
+  workspaces: { enabled: true, limit: 1, size: 1 },
+}
+
 let mockCurrentWorkspace: GetWorkspacesCurrentSummaryResponse | undefined = currentWorkspaceValue
 let mockWorkspaces: TenantListItemResponse[] = []
+let mockWorkspacePolicy = disabledCreatePolicy
 
 const mockCurrentWorkspaceQuery = (
   data: GetWorkspacesCurrentSummaryResponse | undefined = currentWorkspaceValue,
@@ -121,19 +213,31 @@ const mockCurrentWorkspaceQuery = (
 
 type RenderWorkspaceCardOptions = Parameters<typeof renderWithConsoleQuery>[1] & {
   seedWorkspaces?: boolean
+  seedPolicy?: boolean
   systemFeaturesLicense?: Parameters<typeof seedSystemFeaturesLicense>[1]
 }
 
 const renderWorkspaceCard = (options?: RenderWorkspaceCardOptions) => {
-  const { seedWorkspaces = true, systemFeaturesLicense, ...renderOptions } = options ?? {}
+  const {
+    seedWorkspaces = true,
+    seedPolicy = true,
+    systemFeaturesLicense,
+    ...renderOptions
+  } = options ?? {}
   const queryClient = createConsoleQueryClient()
   if (mockCurrentWorkspace)
-    queryClient.setQueryData(
-      consoleQuery.workspaces.current.summary.get.queryKey(),
-      mockCurrentWorkspace,
-    )
+    queryClient.setQueryData(consoleQuery.workspaces.current.summary.get.queryKey(), {
+      ...mockCurrentWorkspace,
+      is_owner: mockCurrentWorkspace.is_owner ?? mockCurrentWorkspace.role === 'owner',
+    })
   if (seedWorkspaces)
-    queryClient.setQueryData(consoleQuery.workspaces.get.queryKey(), { workspaces: mockWorkspaces })
+    queryClient.setQueryData(consoleQuery.workspaces.get.queryKey(), {
+      workspaces: mockWorkspaces.map((workspace) => ({
+        ...workspace,
+        is_owner: workspace.is_owner ?? false,
+      })),
+    })
+  if (seedPolicy) queryClient.setQueryData(mockWorkspacePolicyQueryKey, mockWorkspacePolicy)
   if (systemFeaturesLicense) seedSystemFeaturesLicense(queryClient, systemFeaturesLicense)
 
   return renderWithConsoleQuery(<WorkspaceCard />, {
@@ -160,6 +264,7 @@ describe('WorkspaceCard', () => {
         status: 'normal',
         created_at: 0,
         current: true,
+        is_owner: true,
       },
       {
         id: 'workspace-2',
@@ -168,10 +273,21 @@ describe('WorkspaceCard', () => {
         status: 'normal',
         created_at: 0,
         current: false,
+        is_owner: false,
       },
     ]
+    mockWorkspacePolicy = disabledCreatePolicy
     mockFetchWorkspaces.mockResolvedValue({ workspaces: mockWorkspaces })
+    mockFetchWorkspacePolicy.mockResolvedValue(disabledCreatePolicy)
     mockSwitchWorkspace.mockReturnValue(new Promise(() => {}))
+    mockCreateWorkspace.mockResolvedValue({
+      result: 'success',
+      new_tenant: { id: 'workspace-3', name: 'New Space' },
+    })
+    mockArchiveWorkspace.mockResolvedValue({ result: 'success', switched: true })
+    mockLeaveWorkspace.mockResolvedValue({ result: 'success', switched: true })
+    mockUnarchiveWorkspace.mockResolvedValue({ result: 'success' })
+    mockFetchArchivedWorkspaces.mockResolvedValue({ workspaces: [] })
     mockCurrentWorkspaceQuery()
     vi.mocked(useProviderContext).mockReturnValue({
       enableBilling: true,
@@ -372,7 +488,7 @@ describe('WorkspaceCard', () => {
     ).toBeInTheDocument()
     const workspaceItem = within(panel).getByRole('button', { name: 'Evan Workspace' })
     expect(workspaceItem).toBeInTheDocument()
-    expect(workspaceItem.parentElement).toHaveClass('max-h-[240px]', 'overflow-y-auto')
+    expect(workspaceItem.closest('[class*="max-h-[240px]"]')).toBeInTheDocument()
   })
 
   it('filters workspace switcher options from the search action', async () => {
@@ -408,6 +524,7 @@ describe('WorkspaceCard', () => {
         created_at: 1,
         last_opened_at: 20,
         current: true,
+        is_owner: true,
       },
       {
         id: 'workspace-2',
@@ -417,6 +534,7 @@ describe('WorkspaceCard', () => {
         created_at: 3,
         last_opened_at: null,
         current: false,
+        is_owner: false,
       },
       {
         id: 'workspace-3',
@@ -426,6 +544,7 @@ describe('WorkspaceCard', () => {
         created_at: 2,
         last_opened_at: 30,
         current: false,
+        is_owner: false,
       },
     ]
     renderWorkspaceCard()
@@ -564,5 +683,186 @@ describe('WorkspaceCard', () => {
     expect(
       within(panel).queryByRole('button', { name: 'common.mainNav.workspace.inviteMembers' }),
     ).not.toBeInTheDocument()
+  })
+
+  it('hides create workspace when policy does not allow it', async () => {
+    renderWorkspaceCard()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.mainNav.workspace.openMenu' }))
+
+    const panel = await screen.findByRole('dialog', { name: 'Solar Studio' })
+    expect(
+      within(panel).queryByRole('button', { name: 'common.mainNav.workspace.create' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('creates a workspace and reloads after a successful submit', async () => {
+    const user = userEvent.setup()
+    const mockAssign = vi.fn()
+    vi.stubGlobal('location', {
+      ...window.location,
+      assign: mockAssign,
+      origin: 'http://localhost',
+    })
+    mockWorkspacePolicy = allowedCreatePolicy
+    renderWorkspaceCard()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.mainNav.workspace.openMenu' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'common.mainNav.workspace.create' }))
+
+    const createDialog = await screen.findByRole('dialog', {
+      name: 'common.mainNav.workspace.createTitle',
+    })
+    await user.type(
+      within(createDialog).getByLabelText('common.account.workspaceName'),
+      'New Space',
+    )
+    await user.click(within(createDialog).getByRole('button', { name: 'common.operation.create' }))
+
+    await waitFor(() =>
+      expect(mockCreateWorkspace).toHaveBeenCalledWith({ body: { name: 'New Space' } }),
+    )
+    expect(mockAssign).toHaveBeenCalledWith('http://localhost')
+    vi.unstubAllGlobals()
+  })
+
+  it('disables create workspace when the license quota is exhausted', async () => {
+    mockWorkspacePolicy = exhaustedCreatePolicy
+    renderWorkspaceCard()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.mainNav.workspace.openMenu' }))
+
+    const panel = await screen.findByRole('dialog', { name: 'Solar Studio' })
+    expect(
+      within(panel).getByRole('button', { name: 'common.mainNav.workspace.create' }),
+    ).toBeDisabled()
+  })
+
+  it('shows a limit toast when create fails with a stale policy', async () => {
+    const user = userEvent.setup()
+    mockWorkspacePolicy = allowedCreatePolicy
+    mockCreateWorkspace.mockRejectedValue({
+      data: { body: { code: 'limit_exceeded' } },
+    })
+    renderWorkspaceCard()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.mainNav.workspace.openMenu' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'common.mainNav.workspace.create' }))
+
+    const createDialog = await screen.findByRole('dialog', {
+      name: 'common.mainNav.workspace.createTitle',
+    })
+    await user.type(
+      within(createDialog).getByLabelText('common.account.workspaceName'),
+      'Overflow Space',
+    )
+    await user.click(within(createDialog).getByRole('button', { name: 'common.operation.create' }))
+
+    await waitFor(() =>
+      expect(toastMocks.mockNotify).toHaveBeenCalledWith({
+        type: 'error',
+        message: 'common.mainNav.workspace.createLimitReached',
+      }),
+    )
+  })
+
+  it('disables archive and leave when only one workspace remains', async () => {
+    mockWorkspaces = [
+      {
+        id: 'workspace-1',
+        name: 'Solar Studio',
+        plan: 'sandbox',
+        status: 'normal',
+        created_at: 0,
+        current: true,
+        is_owner: true,
+      },
+    ]
+    renderWorkspaceCard()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.mainNav.workspace.openMenu' }))
+
+    const panel = await screen.findByRole('dialog', { name: 'Solar Studio' })
+    expect(
+      within(panel).getByRole('button', { name: 'common.mainNav.workspace.archive' }),
+    ).toBeDisabled()
+  })
+
+  it('archives a workspace after confirm', async () => {
+    const user = userEvent.setup()
+    const mockAssign = vi.fn()
+    vi.stubGlobal('location', {
+      ...window.location,
+      assign: mockAssign,
+      origin: 'http://localhost',
+    })
+    renderWorkspaceCard()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.mainNav.workspace.openMenu' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'common.mainNav.workspace.archive' }))
+
+    const confirm = await screen.findByRole('alertdialog')
+    await user.click(within(confirm).getByRole('button', { name: 'common.operation.confirm' }))
+
+    await waitFor(() =>
+      expect(mockArchiveWorkspace).toHaveBeenCalledWith({ body: { tenant_id: 'workspace-1' } }),
+    )
+    expect(mockAssign).toHaveBeenCalledWith('http://localhost')
+    vi.unstubAllGlobals()
+  })
+
+  it('leaves a non-owned workspace after confirm', async () => {
+    const user = userEvent.setup()
+    const mockAssign = vi.fn()
+    vi.stubGlobal('location', {
+      ...window.location,
+      assign: mockAssign,
+      origin: 'http://localhost',
+    })
+    renderWorkspaceCard()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.mainNav.workspace.openMenu' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'common.mainNav.workspace.leave' }))
+
+    const confirm = await screen.findByRole('alertdialog')
+    await user.click(within(confirm).getByRole('button', { name: 'common.operation.confirm' }))
+
+    await waitFor(() =>
+      expect(mockLeaveWorkspace).toHaveBeenCalledWith({ body: { tenant_id: 'workspace-2' } }),
+    )
+    expect(mockAssign).toHaveBeenCalledWith('http://localhost')
+    vi.unstubAllGlobals()
+  })
+
+  it('restores an archived workspace after confirm', async () => {
+    const user = userEvent.setup()
+    mockFetchArchivedWorkspaces.mockResolvedValue({
+      workspaces: [
+        {
+          id: 'workspace-9',
+          name: 'Old Space',
+          plan: 'sandbox',
+          status: 'archive',
+          created_at: 0,
+          current: false,
+          is_owner: true,
+        },
+      ],
+    })
+    renderWorkspaceCard()
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.mainNav.workspace.openMenu' }))
+    expect(await screen.findByText('common.mainNav.workspace.archivedSection')).toBeInTheDocument()
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'common.mainNav.workspace.unarchive' }),
+    )
+
+    const confirm = await screen.findByRole('alertdialog')
+    await user.click(within(confirm).getByRole('button', { name: 'common.operation.confirm' }))
+
+    await waitFor(() =>
+      expect(mockUnarchiveWorkspace).toHaveBeenCalledWith({ body: { tenant_id: 'workspace-9' } }),
+    )
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 })

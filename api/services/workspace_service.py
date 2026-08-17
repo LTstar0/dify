@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from configs import dify_config
 from enums import CloudPlan, DeploymentEdition
-from models.account import Tenant, TenantAccountJoin, TenantAccountRole
+from models.account import Account, Tenant, TenantAccountJoin, TenantAccountRole
 from services.account_service import TenantService
 from services.billing_service import BillingService
 from services.feature_service import FeatureService
@@ -105,6 +105,12 @@ class WorkspaceService:
         assert tenant_account_join is not None, "TenantAccountJoin not found"
 
         effective_pool = cls.get_effective_credit_pool(tenant.id, session=session)
+        account = session.get(Account, account_id)
+        is_owner = (
+            TenantService.is_workspace_owner(account, tenant, session=session)
+            if account is not None
+            else TenantAccountRole(tenant_account_join.role) == TenantAccountRole.OWNER
+        )
 
         return {
             "id": tenant.id,
@@ -112,6 +118,7 @@ class WorkspaceService:
             "role": tenant_account_join.role,
             "plan": effective_pool.plan,
             "credits": effective_pool.remaining_credits,
+            "is_owner": is_owner,
         }
 
     @classmethod

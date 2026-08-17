@@ -2,6 +2,7 @@
 
 import type { GetWorkspacesCurrentSummaryResponse } from '@dify/contracts/api/console/workspaces/types.gen'
 import type { ReactNode } from 'react'
+import type { WorkspaceLifecycleAction } from './workspace-lifecycle-dialog'
 import { cn } from '@langgenius/dify-ui/cn'
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from '@langgenius/dify-ui/popover'
 import { toast } from '@langgenius/dify-ui/toast'
@@ -25,6 +26,9 @@ import { consoleQuery } from '@/service/client'
 import { hasPermission } from '@/utils/permission'
 import { basePath } from '@/utils/var'
 import { formatCredits } from '../utils'
+import { CreateWorkspaceDialog } from './create-workspace-dialog'
+import { canCreateFromWorkspacePolicy } from './create-workspace-error'
+import { WorkspaceLifecycleDialog } from './workspace-lifecycle-dialog'
 import { WorkspaceMenuItemContent } from './workspace-menu-content'
 import WorkspacePlanBadge from './workspace-plan-badge'
 import { WorkspaceSwitcher } from './workspace-switcher'
@@ -259,9 +263,22 @@ export function WorkspaceCard() {
     }),
   )
   const [open, setOpen] = useState(false)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [lifecycleAction, setLifecycleAction] = useState<WorkspaceLifecycleAction | null>(null)
+  const [lifecycleTenantId, setLifecycleTenantId] = useState<string | null>(null)
   const workspacesQueryOptions = consoleQuery.workspaces.get.queryOptions()
   const workspacesQuery = useQuery({
     ...workspacesQueryOptions,
+    enabled: open,
+  })
+  const workspacePolicyQueryOptions = consoleQuery.workspaces.policy.get.queryOptions()
+  const workspacePolicyQuery = useQuery({
+    ...workspacePolicyQueryOptions,
+    enabled: open,
+  })
+  const archivedWorkspacesQueryOptions = consoleQuery.workspaces.archived.get.queryOptions()
+  const archivedWorkspacesQuery = useQuery({
+    ...archivedWorkspacesQueryOptions,
     enabled: open,
   })
   const switchWorkspaceMutation = useMutation(consoleQuery.workspaces.switch.post.mutationOptions())
@@ -273,7 +290,12 @@ export function WorkspaceCard() {
   const isCloudEdition = deploymentEdition === 'CLOUD'
   const prefetchWorkspaces = () => {
     void queryClient.prefetchQuery(workspacesQueryOptions)
+    void queryClient.prefetchQuery(workspacePolicyQueryOptions)
+    void queryClient.prefetchQuery(archivedWorkspacesQueryOptions)
   }
+  const createPolicy = workspacePolicyQuery.data
+    ? canCreateFromWorkspacePolicy(workspacePolicyQuery.data)
+    : { visible: false, enabled: false }
 
   if (currentWorkspaceQuery.isPending || !currentWorkspace?.name) {
     return (
@@ -311,50 +333,85 @@ export function WorkspaceCard() {
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <>
-        <WorkspaceCardTrigger
-          name={currentWorkspace.name}
-          status={renderWorkspaceStatus()}
-          credits={currentWorkspace.credits}
-          showCloudBilling={showCloudBilling}
-          showPlanAction={showPlanAction}
-          planActionLabel={planActionLabel}
-          creditsHref={buildIntegrationPath('provider')}
-          onPrefetchWorkspaces={prefetchWorkspaces}
-          onPlanClick={setShowPricingModal}
-        />
-        <PopoverContent
-          placement="bottom-start"
-          sideOffset={-workspaceMenuTriggerHeight}
-          alignOffset={workspaceMenuAlignOffset}
-          popupClassName="w-[280px] overflow-hidden bg-components-panel-bg-blur! p-0! backdrop-blur-[5px]"
-        >
-          <WorkspaceMenuHeader
+    <>
+      <Popover open={open} onOpenChange={setOpen}>
+        <>
+          <WorkspaceCardTrigger
             name={currentWorkspace.name}
             status={renderWorkspaceStatus()}
-            showInviteMembers={showInviteMembers}
-            settingsLabel={t(($) => $['mainNav.workspace.settings'], { ns: 'common' })}
-            inviteMembersLabel={t(($) => $['mainNav.workspace.inviteMembers'], { ns: 'common' })}
-            onOpenSettings={() => {
-              setOpen(false)
-              setSettingsDestination(hasBillingPlan ? 'billing' : 'members')
-            }}
-            onInviteMembers={() => {
-              setOpen(false)
-              setSettingsDestination('members')
-            }}
+            credits={currentWorkspace.credits}
+            showCloudBilling={showCloudBilling}
+            showPlanAction={showPlanAction}
+            planActionLabel={planActionLabel}
+            creditsHref={buildIntegrationPath('provider')}
+            onPrefetchWorkspaces={prefetchWorkspaces}
+            onPlanClick={setShowPricingModal}
           />
-          <WorkspaceSwitcher
-            workspaces={workspaces}
-            isPending={workspacesQuery.isPending}
-            onSwitchWorkspace={(workspaceId) => {
-              setOpen(false)
-              void handleSwitchWorkspace(workspaceId)
-            }}
-          />
-        </PopoverContent>
-      </>
-    </Popover>
+          <PopoverContent
+            placement="bottom-start"
+            sideOffset={-workspaceMenuTriggerHeight}
+            alignOffset={workspaceMenuAlignOffset}
+            popupClassName="w-[280px] overflow-hidden bg-components-panel-bg-blur! p-0! backdrop-blur-[5px]"
+          >
+            <WorkspaceMenuHeader
+              name={currentWorkspace.name}
+              status={renderWorkspaceStatus()}
+              showInviteMembers={showInviteMembers}
+              settingsLabel={t(($) => $['mainNav.workspace.settings'], { ns: 'common' })}
+              inviteMembersLabel={t(($) => $['mainNav.workspace.inviteMembers'], { ns: 'common' })}
+              onOpenSettings={() => {
+                setOpen(false)
+                setSettingsDestination(hasBillingPlan ? 'billing' : 'members')
+              }}
+              onInviteMembers={() => {
+                setOpen(false)
+                setSettingsDestination('members')
+              }}
+            />
+            <WorkspaceSwitcher
+              workspaces={workspaces}
+              archivedWorkspaces={archivedWorkspacesQuery.data?.workspaces}
+              isPending={workspacesQuery.isPending}
+              showCreate={createPolicy.visible}
+              createDisabled={!createPolicy.enabled}
+              onSwitchWorkspace={(workspaceId) => {
+                setOpen(false)
+                void handleSwitchWorkspace(workspaceId)
+              }}
+              onCreateWorkspace={() => {
+                setOpen(false)
+                setCreateDialogOpen(true)
+              }}
+              onArchiveWorkspace={(workspaceId) => {
+                setOpen(false)
+                setLifecycleAction('archive')
+                setLifecycleTenantId(workspaceId)
+              }}
+              onLeaveWorkspace={(workspaceId) => {
+                setOpen(false)
+                setLifecycleAction('leave')
+                setLifecycleTenantId(workspaceId)
+              }}
+              onUnarchiveWorkspace={(workspaceId) => {
+                setOpen(false)
+                setLifecycleAction('unarchive')
+                setLifecycleTenantId(workspaceId)
+              }}
+            />
+          </PopoverContent>
+        </>
+      </Popover>
+      <CreateWorkspaceDialog open={createDialogOpen} onOpenChange={setCreateDialogOpen} />
+      <WorkspaceLifecycleDialog
+        action={lifecycleAction}
+        tenantId={lifecycleTenantId}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setLifecycleAction(null)
+            setLifecycleTenantId(null)
+          }
+        }}
+      />
+    </>
   )
 }

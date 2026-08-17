@@ -34,12 +34,29 @@ Re-run to upgrade. For tagged `rc`/`stable` builds, use the GitHub installer (`i
 
 ```sh
 difyctl auth login                                       # opens browser; paste the device code shown
+difyctl get workspace                                    # list workspaces
+difyctl create workspace --name "Team Space"             # create and switch
+difyctl archive workspace --yes                          # archive the active workspace
+difyctl unarchive workspace <id> --yes                   # restore an archived workspace
+difyctl leave workspace --yes                            # leave the active workspace
+difyctl get all-workspaces                               # operator: list every workspace
+difyctl create all-workspace --name ops --owner-email a@b.com
+difyctl archive all-workspace <id> --yes                 # operator archive
+difyctl unarchive all-workspace <id> --yes               # operator restore
+difyctl get all-accounts                                 # operator: list accounts and memberships
+difyctl create all-account --email u@x.com --name User --password Passw0rd1
+difyctl create all-workspace-member -w <id> --email u@x.com --role editor
+difyctl get all-workspace-members -w <id>
+difyctl set all-workspace-member <account-id> -w <id> --role admin
+difyctl delete all-workspace-member <account-id> -w <id> --yes
 difyctl get app                                          # list apps in default workspace
 difyctl describe app <app-id>                            # inspect parameters
 difyctl run app <app-id> "hello"                         # run, blocking
 difyctl run app <app-id> "hello" -o json | jq .answer    # JSON output
 difyctl run app <app-id> --input name=world --input topic=cats   # workflow inputs
 ```
+
+Operator commands require `DIFY_ADMIN_API_KEY`. Workspace and tenant-access concepts are documented in [`docs/workspaces.md`].
 
 Background docs: `difyctl help account`, `difyctl help external`, `difyctl help environment`, `difyctl help agent`.
 
@@ -116,3 +133,4 @@ Apache-2.0.
 
 [Dify]: https://dify.ai
 [`ARD.md`]: ARD.md
+[`docs/workspaces.md`]: ../docs/workspaces.md

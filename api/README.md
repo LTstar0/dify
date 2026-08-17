@@ -44,6 +44,8 @@ The scripts resolve paths relative to their location, so you can run them from a
 
 1. Set up your application by visiting `http://localhost:3000`.
 
+   Multi-workspace create, archive, restore, and member assignment are documented in [`docs/workspaces.md`](../docs/workspaces.md). Enable extra workspace creation with `ALLOW_CREATE_WORKSPACE=true` in `.env`.
+
 1. Start the worker service (async and scheduler tasks, runs from `api`).
 
    ```bash

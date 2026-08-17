@@ -2,7 +2,75 @@
 
 import { oc } from '@orpc/contract'
 import * as z from 'zod'
-import { zGetAllWorkspacesQuery, zGetAllWorkspacesResponse } from './zod.gen'
+import {
+  zGetAllWorkspacesQuery,
+  zGetAllWorkspacesResponse,
+  zPostAllWorkspacesBody,
+  zPostAllWorkspacesByWorkspaceIdArchivePath,
+  zPostAllWorkspacesByWorkspaceIdArchiveResponse,
+  zPostAllWorkspacesByWorkspaceIdInfoBody,
+  zPostAllWorkspacesByWorkspaceIdInfoPath,
+  zPostAllWorkspacesByWorkspaceIdInfoResponse,
+  zPostAllWorkspacesByWorkspaceIdUnarchivePath,
+  zPostAllWorkspacesByWorkspaceIdUnarchiveResponse,
+  zPostAllWorkspacesResponse,
+} from './zod.gen'
+
+export const post = oc
+  .route({
+    inputStructure: 'detailed',
+    method: 'POST',
+    operationId: 'postAllWorkspacesByWorkspaceIdArchive',
+    path: '/all-workspaces/{workspace_id}/archive',
+    tags: ['console'],
+  })
+  .input(z.object({ params: zPostAllWorkspacesByWorkspaceIdArchivePath }))
+  .output(zPostAllWorkspacesByWorkspaceIdArchiveResponse)
+
+export const archive = {
+  post,
+}
+
+export const post2 = oc
+  .route({
+    inputStructure: 'detailed',
+    method: 'POST',
+    operationId: 'postAllWorkspacesByWorkspaceIdInfo',
+    path: '/all-workspaces/{workspace_id}/info',
+    tags: ['console'],
+  })
+  .input(
+    z.object({
+      body: zPostAllWorkspacesByWorkspaceIdInfoBody,
+      params: zPostAllWorkspacesByWorkspaceIdInfoPath,
+    }),
+  )
+  .output(zPostAllWorkspacesByWorkspaceIdInfoResponse)
+
+export const info = {
+  post: post2,
+}
+
+export const post3 = oc
+  .route({
+    inputStructure: 'detailed',
+    method: 'POST',
+    operationId: 'postAllWorkspacesByWorkspaceIdUnarchive',
+    path: '/all-workspaces/{workspace_id}/unarchive',
+    tags: ['console'],
+  })
+  .input(z.object({ params: zPostAllWorkspacesByWorkspaceIdUnarchivePath }))
+  .output(zPostAllWorkspacesByWorkspaceIdUnarchiveResponse)
+
+export const unarchive = {
+  post: post3,
+}
+
+export const byWorkspaceId = {
+  archive,
+  info,
+  unarchive,
+}
 
 export const get = oc
   .route({
@@ -15,8 +83,22 @@ export const get = oc
   .input(z.object({ query: zGetAllWorkspacesQuery.optional() }))
   .output(zGetAllWorkspacesResponse)
 
+export const post4 = oc
+  .route({
+    inputStructure: 'detailed',
+    method: 'POST',
+    operationId: 'postAllWorkspaces',
+    path: '/all-workspaces',
+    successStatus: 201,
+    tags: ['console'],
+  })
+  .input(z.object({ body: zPostAllWorkspacesBody }))
+  .output(zPostAllWorkspacesResponse)
+
 export const allWorkspaces = {
   get,
+  post: post4,
+  byWorkspaceId,
 }
 
 export const contract = {

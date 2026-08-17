@@ -1,5 +1,7 @@
 import type {
+  WorkspaceCreatePayload,
   WorkspaceDetailResponse,
+  WorkspaceLifecycleResponse,
   WorkspaceListResponse,
 } from '@dify/contracts/api/openapi/types.gen'
 import type { OpenApiClient } from '@/http/orpc'
@@ -20,6 +22,10 @@ export class WorkspacesClient {
     return this.orpc.workspaces.get()
   }
 
+  async create(payload: WorkspaceCreatePayload): Promise<WorkspaceDetailResponse> {
+    return this.orpc.workspaces.post({ body: payload })
+  }
+
   /**
    * Server-side workspace switch via OpenAPI POST
    * `/workspaces/{id}:switch` — the bearer-authed equivalent of the
@@ -31,5 +37,21 @@ export class WorkspacesClient {
    */
   async switch(workspaceId: string): Promise<WorkspaceDetailResponse> {
     return this.orpc.workspaces.byWorkspaceId.switch.post({ params: { workspace_id: workspaceId } })
+  }
+
+  async archive(workspaceId: string): Promise<WorkspaceLifecycleResponse> {
+    return this.orpc.workspaces.byWorkspaceId.archive.post({
+      params: { workspace_id: workspaceId },
+    })
+  }
+
+  async leave(workspaceId: string): Promise<WorkspaceLifecycleResponse> {
+    return this.orpc.workspaces.byWorkspaceId.leave.post({ params: { workspace_id: workspaceId } })
+  }
+
+  async unarchive(workspaceId: string): Promise<WorkspaceDetailResponse> {
+    return this.orpc.workspaces.byWorkspaceId.unarchive.post({
+      params: { workspace_id: workspaceId },
+    })
   }
 }

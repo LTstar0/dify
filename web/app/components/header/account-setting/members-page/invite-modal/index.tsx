@@ -44,7 +44,7 @@ type SubmissionError =
 
 type InviteFormProps = Omit<InviteModalProps, 'open' | 'trigger'>
 
-function InviteForm({ isEmailSetup, onOpenChange, onSend }: InviteFormProps) {
+export function InviteForm({ isEmailSetup, onOpenChange, onSend }: InviteFormProps) {
   const { t } = useTranslation()
   const locale = useLocale()
   const queryClient = useQueryClient()

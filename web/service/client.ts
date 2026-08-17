@@ -25,6 +25,7 @@ import { isClient } from '@/utils/client'
 import { request, sseGeneratorPost } from './base'
 import { createConsoleDynamicLink } from './console-link'
 import { normalizeConsoleOpenAPIURL } from './console-openapi-url'
+import { logOpenApiClientError } from './openapi-client-error'
 
 export function streamWorkflowGeneration(...args: Parameters<typeof sseGeneratorPost>) {
   return sseGeneratorPost(...args)
@@ -87,11 +88,7 @@ function createConsoleOpenAPILink(contract: AnyContractRouter): ConsoleClientLin
         silent: options.context.silent,
       })
     },
-    interceptors: [
-      onError((error) => {
-        console.error(error)
-      }),
-    ],
+    interceptors: [onError(logOpenApiClientError)],
   })
 }
 
@@ -104,11 +101,7 @@ const marketplaceLink = new OpenAPILink(marketplaceRouterContract, {
       cache: 'no-store',
     })
   },
-  interceptors: [
-    onError((error) => {
-      console.error(error)
-    }),
-  ],
+  interceptors: [onError(logOpenApiClientError)],
 })
 
 export const marketplaceClient: JsonifiedClient<

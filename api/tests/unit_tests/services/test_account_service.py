@@ -1,6 +1,7 @@
 import json
 from collections.abc import Iterator, Sequence
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import UUID
 
@@ -30,6 +31,12 @@ from services.errors.account import (
     AccountRegisterError,
     CurrentPasswordIncorrectError,
     NoPermissionError,
+)
+from services.errors.workspace import (
+    CannotArchiveLastWorkspaceError,
+    CannotLeaveLastWorkspaceError,
+    OwnerCannotLeaveError,
+    WorkspacesLimitExceededError,
 )
 
 type _MockDependencies = dict[str, MagicMock]
@@ -2781,6 +2788,24 @@ class TestSessionInjectedGetters:
         assert out[0][0] is join
         assert out[0][1] is tenant
 
+    def test_get_account_memberships_excludes_archived_by_default(self, sqlite_session: Session) -> None:
+        normal = Tenant(name="Normal Workspace")
+        archived = Tenant(name="Archived Workspace", status=TenantStatus.ARCHIVE)
+        sqlite_session.add_all([normal, archived])
+        sqlite_session.flush()
+        self._add_tenant_account_join(sqlite_session, normal, "user-123", TenantAccountRole.OWNER)
+        self._add_tenant_account_join(sqlite_session, archived, "user-123", TenantAccountRole.OWNER, current=True)
+        sqlite_session.commit()
+
+        out = TenantService.get_account_memberships("user-123", session=sqlite_session)
+        assert [row[1].id for row in out] == [normal.id]
+
+        unfiltered = TenantService.get_account_memberships("user-123", session=sqlite_session, status=None)
+        assert {row[1].id for row in unfiltered} == {normal.id, archived.id}
+
+        listed = TenantService.get_workspaces_for_account("user-123", session=sqlite_session)
+        assert [row[0].id for row in listed] == [normal.id]
+
     def test_get_workspaces_for_account_uses_session_execute(self, sqlite_session: Session) -> None:
         """The list endpoint orders by ``Tenant.created_at``; the helper
         returns ``(Tenant, TenantAccountJoin)`` rows in that order.
@@ -2938,3 +2963,163 @@ class TestIsEmailSendIpLimit:
             patch.object(dify_config, "EMAIL_SEND_IP_LIMIT_PER_MINUTE", 60),
         ):
             assert AccountService.is_email_send_ip_limit("1.2.3.4") is False
+
+
+def _persist_account(session: Session, account_id: str, email: str) -> Account:
+    account = Account(name=email, email=email, status=AccountStatus.ACTIVE)
+    account.id = account_id
+    session.add(account)
+    return account
+
+
+def _persist_tenant(session: Session, name: str, *, status: TenantStatus = TenantStatus.NORMAL) -> Tenant:
+    tenant = Tenant(name=name, status=status)
+    session.add(tenant)
+    session.flush()
+    return tenant
+
+
+def _join(
+    session: Session,
+    tenant: Tenant,
+    account_id: str,
+    role: TenantAccountRole,
+    *,
+    current: bool = False,
+) -> TenantAccountJoin:
+    join = TenantAccountJoin(tenant_id=tenant.id, account_id=account_id, role=role, current=current)
+    session.add(join)
+    return join
+
+
+def _noop_lock(*_args, **_kwargs) -> MagicMock:
+    lock = MagicMock()
+    lock.__enter__.return_value = lock
+    lock.__exit__.return_value = False
+    return lock
+
+
+class TestTenantLifecycle:
+    def test_archive_rejects_when_any_member_would_lose_all_normal_workspaces(self, sqlite_session: Session) -> None:
+        owner = _persist_account(sqlite_session, "owner-1", "owner@example.com")
+        member = _persist_account(sqlite_session, "member-1", "member@example.com")
+        only_for_member = _persist_tenant(sqlite_session, "Shared")
+        owner_other = _persist_tenant(sqlite_session, "Owner Other")
+        _join(sqlite_session, only_for_member, owner.id, TenantAccountRole.OWNER, current=True)
+        _join(sqlite_session, only_for_member, member.id, TenantAccountRole.NORMAL)
+        _join(sqlite_session, owner_other, owner.id, TenantAccountRole.OWNER)
+        sqlite_session.commit()
+
+        with pytest.raises(CannotArchiveLastWorkspaceError):
+            TenantService.archive_tenant(only_for_member, owner, session=sqlite_session)
+
+        sqlite_session.refresh(only_for_member)
+        assert only_for_member.status == TenantStatus.NORMAL
+
+    def test_archive_switches_when_every_member_has_another_normal_workspace(self, sqlite_session: Session) -> None:
+        owner = _persist_account(sqlite_session, "owner-1", "owner@example.com")
+        member = _persist_account(sqlite_session, "member-1", "member@example.com")
+        shared = _persist_tenant(sqlite_session, "Shared")
+        owner_other = _persist_tenant(sqlite_session, "Owner Other")
+        member_other = _persist_tenant(sqlite_session, "Member Other")
+        _join(sqlite_session, shared, owner.id, TenantAccountRole.OWNER, current=True)
+        _join(sqlite_session, shared, member.id, TenantAccountRole.NORMAL)
+        _join(sqlite_session, owner_other, owner.id, TenantAccountRole.OWNER)
+        _join(sqlite_session, member_other, member.id, TenantAccountRole.OWNER)
+        sqlite_session.commit()
+
+        next_tenant = TenantService.archive_tenant(shared, owner, session=sqlite_session)
+
+        sqlite_session.refresh(shared)
+        assert shared.status == TenantStatus.ARCHIVE
+        assert next_tenant is not None
+        assert next_tenant.id == owner_other.id
+
+    def test_archive_rechecks_last_workspace_inside_the_lifecycle_lock(
+        self, sqlite_session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        owner = _persist_account(sqlite_session, "owner-1", "owner@example.com")
+        first = _persist_tenant(sqlite_session, "First")
+        second = _persist_tenant(sqlite_session, "Second")
+        _join(sqlite_session, first, owner.id, TenantAccountRole.OWNER, current=True)
+        _join(sqlite_session, second, owner.id, TenantAccountRole.OWNER)
+        sqlite_session.commit()
+
+        def lock_after_peer_archives(*_args, **_kwargs) -> MagicMock:
+            sqlite_session.refresh(second)
+            second.status = TenantStatus.ARCHIVE
+            sqlite_session.flush()
+            return _noop_lock()
+
+        monkeypatch.setattr("services.account_service.redis_client.lock", lock_after_peer_archives)
+
+        with pytest.raises(CannotArchiveLastWorkspaceError):
+            TenantService.archive_tenant(first, owner, session=sqlite_session)
+
+        sqlite_session.refresh(first)
+        assert first.status == TenantStatus.NORMAL
+
+    def test_leave_rejects_owner(self, sqlite_session: Session) -> None:
+        owner = _persist_account(sqlite_session, "owner-1", "owner@example.com")
+        extra = _persist_account(sqlite_session, "member-1", "member@example.com")
+        tenant = _persist_tenant(sqlite_session, "Owned")
+        other = _persist_tenant(sqlite_session, "Other")
+        _join(sqlite_session, tenant, owner.id, TenantAccountRole.OWNER, current=True)
+        _join(sqlite_session, tenant, extra.id, TenantAccountRole.NORMAL)
+        _join(sqlite_session, other, owner.id, TenantAccountRole.NORMAL)
+        sqlite_session.commit()
+
+        with pytest.raises(OwnerCannotLeaveError):
+            TenantService.leave_tenant(tenant, owner, session=sqlite_session)
+
+    def test_leave_rechecks_count_inside_the_lifecycle_lock(
+        self, sqlite_session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        member = _persist_account(sqlite_session, "member-1", "member@example.com")
+        owner = _persist_account(sqlite_session, "owner-1", "owner@example.com")
+        first = _persist_tenant(sqlite_session, "First")
+        second = _persist_tenant(sqlite_session, "Second")
+        _join(sqlite_session, first, owner.id, TenantAccountRole.OWNER)
+        _join(sqlite_session, first, member.id, TenantAccountRole.NORMAL, current=True)
+        _join(sqlite_session, second, owner.id, TenantAccountRole.OWNER)
+        _join(sqlite_session, second, member.id, TenantAccountRole.NORMAL)
+        sqlite_session.commit()
+
+        def lock_after_peer_leaves(*_args, **_kwargs) -> MagicMock:
+            sqlite_session.refresh(second)
+            second.status = TenantStatus.ARCHIVE
+            sqlite_session.flush()
+            return _noop_lock()
+
+        monkeypatch.setattr("services.account_service.redis_client.lock", lock_after_peer_leaves)
+
+        with pytest.raises(CannotLeaveLastWorkspaceError):
+            TenantService.leave_tenant(first, member, session=sqlite_session)
+
+    def test_unarchive_restores_archived_workspace(
+        self, sqlite_session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tenant = _persist_tenant(sqlite_session, "Archived", status=TenantStatus.ARCHIVE)
+        sqlite_session.commit()
+        monkeypatch.setattr(
+            "services.account_service.FeatureService.get_license",
+            lambda: SimpleNamespace(workspaces=SimpleNamespace(is_available=lambda: True)),
+        )
+
+        TenantService.unarchive_tenant(tenant, session=sqlite_session)
+
+        sqlite_session.refresh(tenant)
+        assert tenant.status == TenantStatus.NORMAL
+
+    def test_unarchive_rejects_when_license_is_exhausted(
+        self, sqlite_session: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tenant = _persist_tenant(sqlite_session, "Archived", status=TenantStatus.ARCHIVE)
+        sqlite_session.commit()
+        monkeypatch.setattr(
+            "services.account_service.FeatureService.get_license",
+            lambda: SimpleNamespace(workspaces=SimpleNamespace(is_available=lambda: False)),
+        )
+
+        with pytest.raises(WorkspacesLimitExceededError):
+            TenantService.unarchive_tenant(tenant, session=sqlite_session)

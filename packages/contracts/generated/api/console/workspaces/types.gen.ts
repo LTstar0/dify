@@ -8,6 +8,25 @@ export type TenantListResponse = {
   workspaces: Array<TenantListItemResponse>
 }
 
+export type WorkspaceCreatePayload = {
+  name: string
+}
+
+export type SwitchWorkspaceResponse = {
+  new_tenant: TenantInfoResponse
+  result: string
+}
+
+export type WorkspaceTenantPayload = {
+  tenant_id: string
+}
+
+export type WorkspaceLifecycleResponse = {
+  new_tenant?: TenantInfoResponse | null
+  result: string
+  switched: boolean
+}
+
 export type AgentProviderResponse = {
   [key: string]: unknown
 }
@@ -645,6 +664,7 @@ export type WorkspaceAccessMatrix = {
 export type CurrentWorkspaceSummaryResponse = {
   credits: number | null
   id: string
+  is_owner?: boolean
   name: string
   plan: CloudPlan | null
   role: TenantAccountRole
@@ -1038,23 +1058,41 @@ export type WorkspaceInfoPayload = {
   name: string
 }
 
-export type SwitchWorkspacePayload = {
-  tenant_id: string
+export type WorkspacePolicyResponse = {
+  is_allow_create_workspace: boolean
+  workspaces: WorkspaceQuotaResponse
 }
 
-export type SwitchWorkspaceResponse = {
-  new_tenant: TenantInfoResponse
-  result: string
+export type SwitchWorkspacePayload = {
+  tenant_id: string
 }
 
 export type TenantListItemResponse = {
   created_at?: number | null
   current: boolean
   id: string
+  is_owner?: boolean
   last_opened_at?: number | null
   name?: string | null
   plan?: CloudPlan | null
+  role?: string | null
   status?: string | null
+}
+
+export type TenantInfoResponse = {
+  created_at?: number | null
+  custom_config?: WorkspaceCustomConfigResponse | null
+  id: string
+  in_trial?: boolean | null
+  name?: string | null
+  next_credit_reset_date?: number | null
+  plan?: CloudPlan | null
+  role?: string | null
+  status?: string | null
+  trial_credits?: number | null
+  trial_credits_exhausted_at?: number | null
+  trial_credits_used?: number | null
+  trial_end_reason?: string | null
 }
 
 export type SnippetListItemResponse = {
@@ -1704,20 +1742,10 @@ export type TriggerProviderSubscriptionApiEntity = {
   workflows_in_use: number
 }
 
-export type TenantInfoResponse = {
-  created_at?: number | null
-  custom_config?: WorkspaceCustomConfigResponse | null
-  id: string
-  in_trial?: boolean | null
-  name?: string | null
-  next_credit_reset_date?: number | null
-  plan?: CloudPlan | null
-  role?: string | null
-  status?: string | null
-  trial_credits?: number | null
-  trial_credits_exhausted_at?: number | null
-  trial_credits_used?: number | null
-  trial_end_reason?: string | null
+export type WorkspaceQuotaResponse = {
+  enabled: boolean
+  limit: number
+  size: number
 }
 
 export type PluginDependencyType = 'github' | 'marketplace' | 'package'
@@ -2502,6 +2530,47 @@ export type GetWorkspacesResponses = {
 }
 
 export type GetWorkspacesResponse = GetWorkspacesResponses[keyof GetWorkspacesResponses]
+
+export type PostWorkspacesData = {
+  body: WorkspaceCreatePayload
+  path?: never
+  query?: never
+  url: '/workspaces'
+}
+
+export type PostWorkspacesResponses = {
+  201: SwitchWorkspaceResponse
+}
+
+export type PostWorkspacesResponse = PostWorkspacesResponses[keyof PostWorkspacesResponses]
+
+export type PostWorkspacesArchiveData = {
+  body: WorkspaceTenantPayload
+  path?: never
+  query?: never
+  url: '/workspaces/archive'
+}
+
+export type PostWorkspacesArchiveResponses = {
+  200: WorkspaceLifecycleResponse
+}
+
+export type PostWorkspacesArchiveResponse =
+  PostWorkspacesArchiveResponses[keyof PostWorkspacesArchiveResponses]
+
+export type GetWorkspacesArchivedData = {
+  body?: never
+  path?: never
+  query?: never
+  url: '/workspaces/archived'
+}
+
+export type GetWorkspacesArchivedResponses = {
+  200: TenantListResponse
+}
+
+export type GetWorkspacesArchivedResponse =
+  GetWorkspacesArchivedResponses[keyof GetWorkspacesArchivedResponses]
 
 export type GetWorkspacesCurrentAgentProviderByProviderNameData = {
   body?: never
@@ -5707,6 +5776,34 @@ export type PostWorkspacesInfoResponses = {
 export type PostWorkspacesInfoResponse =
   PostWorkspacesInfoResponses[keyof PostWorkspacesInfoResponses]
 
+export type PostWorkspacesLeaveData = {
+  body: WorkspaceTenantPayload
+  path?: never
+  query?: never
+  url: '/workspaces/leave'
+}
+
+export type PostWorkspacesLeaveResponses = {
+  200: WorkspaceLifecycleResponse
+}
+
+export type PostWorkspacesLeaveResponse =
+  PostWorkspacesLeaveResponses[keyof PostWorkspacesLeaveResponses]
+
+export type GetWorkspacesPolicyData = {
+  body?: never
+  path?: never
+  query?: never
+  url: '/workspaces/policy'
+}
+
+export type GetWorkspacesPolicyResponses = {
+  200: WorkspacePolicyResponse
+}
+
+export type GetWorkspacesPolicyResponse =
+  GetWorkspacesPolicyResponses[keyof GetWorkspacesPolicyResponses]
+
 export type PostWorkspacesSwitchData = {
   body: SwitchWorkspacePayload
   path?: never
@@ -5720,6 +5817,20 @@ export type PostWorkspacesSwitchResponses = {
 
 export type PostWorkspacesSwitchResponse =
   PostWorkspacesSwitchResponses[keyof PostWorkspacesSwitchResponses]
+
+export type PostWorkspacesUnarchiveData = {
+  body: WorkspaceTenantPayload
+  path?: never
+  query?: never
+  url: '/workspaces/unarchive'
+}
+
+export type PostWorkspacesUnarchiveResponses = {
+  200: SimpleResultResponse
+}
+
+export type PostWorkspacesUnarchiveResponse =
+  PostWorkspacesUnarchiveResponses[keyof PostWorkspacesUnarchiveResponses]
 
 export type GetWorkspacesByTenantIdModelProvidersByProviderByIconTypeByLangData = {
   body?: never

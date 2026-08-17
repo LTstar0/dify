@@ -94,6 +94,11 @@ class TriggerService:
         if not subscription:
             return None
 
+        from services.account_service import TenantService
+
+        if TenantService.is_tenant_archived(subscription.tenant_id):
+            return Response(status=404, response="Workspace not found")
+
         provider_id = TriggerProviderID(subscription.provider_id)
         controller: PluginTriggerProviderController = TriggerManager.get_trigger_provider(
             tenant_id=subscription.tenant_id, provider_id=provider_id

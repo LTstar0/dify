@@ -4,11 +4,12 @@ from collections.abc import Callable
 from inspect import unwrap
 
 from flask import Flask
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from controllers.openapi.account import AccountApi
-from models import Account
-from models.account import TenantAccountRole
+from models import Account, TenantAccountJoin
+from models.account import TenantAccountRole, TenantStatus
 from tests.test_containers_integration_tests.controllers.openapi.conftest import add_tenant_for_account, auth_for
 
 
@@ -53,3 +54,26 @@ class TestAccountInfo:
         roles = {w.id: w.role for w in result.workspaces}
         assert roles[owner_tenant.id] == TenantAccountRole.OWNER.value
         assert roles[second.id] == "normal"
+
+    def test_omits_archived_workspace_and_picks_remaining_normal_default(
+        self, app: Flask, db_session_with_containers: Session, make_account: Callable[..., Account]
+    ) -> None:
+        account = make_account()
+        owner_tenant = account.current_tenant
+        assert owner_tenant is not None
+        archived = add_tenant_for_account(
+            account, session=db_session_with_containers, role="normal", name="Archived WS"
+        )
+        archived.status = TenantStatus.ARCHIVE
+        for join in db_session_with_containers.scalars(
+            select(TenantAccountJoin).where(TenantAccountJoin.account_id == account.id)
+        ):
+            join.current = join.tenant_id == archived.id
+        db_session_with_containers.commit()
+
+        api = AccountApi()
+        with app.test_request_context("/openapi/v1/account"):
+            result = unwrap(api.get)(api, db_session_with_containers, auth_data=auth_for(account))
+
+        assert {workspace.id for workspace in result.workspaces} == {owner_tenant.id}
+        assert result.default_workspace_id == owner_tenant.id

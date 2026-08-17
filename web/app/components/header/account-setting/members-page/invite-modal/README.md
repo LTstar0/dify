@@ -2,6 +2,8 @@
 
 Owns the workspace member invitation form, including email recipient composition, role selection, submission errors, and invitation request state.
 
+The form is mounted from [`add-member-dialog.tsx`] as the **Send invitation** mode. Immediate membership assignment is a sibling form (`AssignMemberForm`), not this module.
+
 Base UI Form owns field registration, validation, external field errors, and invalid-field focus. TanStack Query owns invitation mutation state. This module keeps only the controlled email composition value and business submission outcome.
 
 ## Internal Modules
@@ -19,3 +21,5 @@ None.
 | `service/access-control/use-workspace-roles` | Loads paginated role options.                                 |
 | `service/client`                             | Executes the invitation mutation.                             |
 | `service/use-common`                         | Invalidates member list queries after a successful invite.    |
+
+[`add-member-dialog.tsx`]: ../add-member-dialog.tsx

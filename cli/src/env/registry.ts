@@ -41,6 +41,11 @@ const REGISTRY_UNSORTED: readonly EnvVar[] = [
     sensitive: true,
   },
   {
+    name: 'DIFY_ADMIN_API_KEY',
+    description: 'Console ADMIN_API_KEY for instance-wide workspace operations.',
+    sensitive: true,
+  },
+  {
     name: 'DIFY_WORKSPACE_ID',
     description: 'Workspace ID used when no --workspace flag is set.',
   },

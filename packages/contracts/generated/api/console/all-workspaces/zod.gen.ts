@@ -3,11 +3,34 @@
 import * as z from 'zod'
 
 /**
+ * AdminWorkspaceCreatePayload
+ */
+export const zAdminWorkspaceCreatePayload = z.object({
+  name: z.string().min(1).max(255),
+  owner_email: z.string(),
+})
+
+/**
+ * WorkspaceInfoPayload
+ */
+export const zWorkspaceInfoPayload = z.object({
+  name: z.string().min(1).max(255),
+})
+
+/**
+ * SimpleResultResponse
+ */
+export const zSimpleResultResponse = z.object({
+  result: z.string(),
+})
+
+/**
  * WorkspaceListItemResponse
  */
 export const zWorkspaceListItemResponse = z.object({
   created_at: z.int().nullish(),
   id: z.string(),
+  member_count: z.int().optional().default(0),
   name: z.string().nullish(),
   status: z.string().nullish(),
 })
@@ -23,12 +46,105 @@ export const zWorkspacePaginationResponse = z.object({
   total: z.int(),
 })
 
+/**
+ * WorkspaceCustomConfigResponse
+ */
+export const zWorkspaceCustomConfigResponse = z.object({
+  remove_webapp_brand: z.boolean().nullish(),
+  replace_webapp_logo: z.string().nullish(),
+})
+
+/**
+ * CloudPlan
+ *
+ * Enum representing user plan types in the cloud platform.
+ *
+ * SANDBOX: Free/default plan with limited features
+ * PROFESSIONAL: Professional paid plan
+ * TEAM: Team collaboration paid plan
+ */
+export const zCloudPlan = z.enum(['professional', 'sandbox', 'team'])
+
+/**
+ * TenantInfoResponse
+ */
+export const zTenantInfoResponse = z.object({
+  created_at: z.int().nullish(),
+  custom_config: zWorkspaceCustomConfigResponse.nullish(),
+  id: z.string(),
+  in_trial: z.boolean().nullish(),
+  name: z.string().nullish(),
+  next_credit_reset_date: z.int().nullish(),
+  plan: zCloudPlan.nullish(),
+  role: z.string().nullish(),
+  status: z.string().nullish(),
+  trial_credits: z.int().nullish(),
+  trial_credits_exhausted_at: z.int().nullish(),
+  trial_credits_used: z.int().nullish(),
+  trial_end_reason: z.string().nullish(),
+})
+
+/**
+ * WorkspaceTenantResultResponse
+ */
+export const zWorkspaceTenantResultResponse = z.object({
+  result: z.string(),
+  tenant: zTenantInfoResponse,
+})
+
+/**
+ * WorkspaceLifecycleResponse
+ */
+export const zWorkspaceLifecycleResponse = z.object({
+  new_tenant: zTenantInfoResponse.nullish(),
+  result: z.string(),
+  switched: z.boolean(),
+})
+
 export const zGetAllWorkspacesQuery = z.object({
+  keyword: z.string().max(255).optional(),
   limit: z.int().gte(1).lte(100).optional().default(20),
   page: z.int().gte(1).lte(99999).optional().default(1),
+  status: z.enum(['archive', 'normal']).optional(),
 })
 
 /**
  * Success
  */
 export const zGetAllWorkspacesResponse = zWorkspacePaginationResponse
+
+export const zPostAllWorkspacesBody = zAdminWorkspaceCreatePayload
+
+/**
+ * Workspace created
+ */
+export const zPostAllWorkspacesResponse = zWorkspaceTenantResultResponse
+
+export const zPostAllWorkspacesByWorkspaceIdArchivePath = z.object({
+  workspace_id: z.uuid(),
+})
+
+/**
+ * Success
+ */
+export const zPostAllWorkspacesByWorkspaceIdArchiveResponse = zWorkspaceLifecycleResponse
+
+export const zPostAllWorkspacesByWorkspaceIdInfoBody = zWorkspaceInfoPayload
+
+export const zPostAllWorkspacesByWorkspaceIdInfoPath = z.object({
+  workspace_id: z.uuid(),
+})
+
+/**
+ * Success
+ */
+export const zPostAllWorkspacesByWorkspaceIdInfoResponse = zWorkspaceTenantResultResponse
+
+export const zPostAllWorkspacesByWorkspaceIdUnarchivePath = z.object({
+  workspace_id: z.uuid(),
+})
+
+/**
+ * Success
+ */
+export const zPostAllWorkspacesByWorkspaceIdUnarchiveResponse = zSimpleResultResponse

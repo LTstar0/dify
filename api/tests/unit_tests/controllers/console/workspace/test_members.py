@@ -19,7 +19,7 @@ from controllers.console.auth.error import (
     OwnerTransferLimitError,
 )
 from controllers.console.error import EmailSendIpLimitError, SeatsLimitExceeded, WorkspaceMembersLimitExceeded
-from controllers.console.workspace.error import InvalidMemberRoleError
+from controllers.console.workspace.error import AccountPasswordRequiredError, InvalidMemberRoleError
 from controllers.console.workspace.members import (
     DatasetOperatorMemberListApi,
     MemberInviteEmailApi,
@@ -34,7 +34,13 @@ from controllers.console.workspace.members import (
 from enums import DeploymentEdition
 from libs.external_api import ExternalApi
 from machinery.context import RequestContext
-from services.errors.account import AccountAlreadyInTenantError, SeatsLimitExceededError
+from services.errors.account import (
+    AccountAlreadyInTenantError,
+    SeatsLimitExceededError,
+)
+from services.errors.account import (
+    AccountPasswordRequiredError as AccountPasswordRequiredServiceError,
+)
 from services.workspace_member_query_service import (
     WorkspaceMemberQueryService,
     WorkspaceMemberRole,
@@ -120,6 +126,67 @@ class TestMemberListApi:
             ]
         }
         assert workspace_member_queries.contexts == [request_context]
+
+
+class TestMemberAssignApi:
+    def test_assigns_existing_account_to_current_workspace(self, app: Flask) -> None:
+        api = MemberListApi()
+        method = unwrap(api.post)
+        tenant = MagicMock(id="t1")
+        user = MagicMock(current_tenant=tenant, id="owner-1")
+        account = SimpleNamespace(
+            id="acct-1",
+            name="Member",
+            email="member@example.com",
+            avatar=None,
+            last_login_at=None,
+            last_active_at=None,
+            created_at=None,
+            role="editor",
+            status="active",
+        )
+        join = MagicMock(role="editor")
+        payload = {"email": "Member@example.com", "role": "editor"}
+
+        with (
+            app.test_request_context("/", json=payload),
+            patch(
+                "controllers.console.workspace.members.AccountService.ensure_account_for_assignment",
+                return_value=(account, False),
+            ) as ensure,
+            patch(
+                "controllers.console.workspace.members.TenantService.assign_account_to_tenant",
+                return_value=(join, True),
+            ) as assign,
+            patch("controllers.console.workspace.members.db.session"),
+        ):
+            result, status = method(api, user)
+
+        assert status == 201
+        assert result["result"] == "success"
+        assert result["created_account"] is False
+        assert result["added"] is True
+        assert result["member"]["email"] == "member@example.com"
+        ensure.assert_called_once()
+        assign.assert_called_once()
+
+    def test_requires_password_for_new_account(self, app: Flask) -> None:
+        api = MemberListApi()
+        method = unwrap(api.post)
+        tenant = MagicMock(id="t1")
+        user = MagicMock(current_tenant=tenant)
+        payload = {"email": "new@example.com", "role": "normal"}
+
+        with (
+            app.test_request_context("/", json=payload),
+            patch(
+                "controllers.console.workspace.members.AccountService.ensure_account_for_assignment",
+                side_effect=AccountPasswordRequiredServiceError("Password is required to create a new account."),
+            ),
+            patch("controllers.console.workspace.members.db.session"),
+            pytest.raises(AccountPasswordRequiredError),
+        ):
+            method(api, user)
 
 
 class TestMemberInviteEmailApi:

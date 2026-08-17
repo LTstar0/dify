@@ -23,16 +23,23 @@ from controllers.common.errors import (
     UnsupportedFileTypeError,
 )
 from controllers.openapi._errors import (
+    CannotArchiveLastWorkspace,
+    CannotLeaveLastWorkspace,
     ErrorBody,
     ErrorDetail,
     FilenameNotExists,
     HumanInputFormNotFound,
     MemberLicenseExceeded,
     MemberLimitExceeded,
+    NotAllowedCreateWorkspace,
     OpenApiError,
     OpenApiErrorCode,
     OpenApiErrorFormatter,
+    OwnerCannotLeave,
     RecipientSurfaceMismatch,
+    WorkspaceAlreadyArchived,
+    WorkspaceNotArchived,
+    WorkspacesLimitExceeded,
 )
 from controllers.service_api.app.error import (
     AgentNotPublishedError,
@@ -325,6 +332,13 @@ ERROR_MATRIX = [
     (MemberLicenseExceeded(), 403, "member_license_exceeded"),
     (HumanInputFormNotFound(), 404, "form_not_found"),
     (RecipientSurfaceMismatch(), 403, "recipient_surface_mismatch"),
+    (NotAllowedCreateWorkspace(), 400, "not_allowed_create_workspace"),
+    (WorkspacesLimitExceeded(), 400, "workspaces_limit_exceeded"),
+    (CannotArchiveLastWorkspace(), 400, "cannot_archive_last_workspace"),
+    (CannotLeaveLastWorkspace(), 400, "cannot_leave_last_workspace"),
+    (OwnerCannotLeave(), 400, "owner_cannot_leave"),
+    (WorkspaceAlreadyArchived(), 409, "workspace_already_archived"),
+    (WorkspaceNotArchived(), 409, "workspace_not_archived"),
 ]
 
 

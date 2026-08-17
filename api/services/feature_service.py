@@ -122,12 +122,25 @@ class FeatureService:
     @classmethod
     def is_workspace_creation_allowed(cls) -> bool:
         """Resolve the backend workspace-creation policy, including the Enterprise override."""
+        is_allowed, _workspaces = cls.get_workspace_creation_policy()
+        return is_allowed
+
+    @classmethod
+    def get_workspace_creation_policy(cls) -> tuple[bool, feature_entities.LicenseLimitationModel]:
+        """Return create-workspace permission and workspace quota from one Enterprise fetch.
+
+        Community and Cloud honor ``ALLOW_CREATE_WORKSPACE`` and an unconstrained
+        quota. Enterprise overlays ``IsAllowCreateWorkspace`` and license
+        workspace limits from a single ``get_info()`` call so policy GET does
+        not double-fetch.
+        """
         is_allowed = dify_config.ALLOW_CREATE_WORKSPACE
         if dify_config.DEPLOYMENT_EDITION != DeploymentEdition.ENTERPRISE:
-            return is_allowed
+            return is_allowed, feature_entities.LicenseLimitationModel()
 
         enterprise_info = EnterpriseService.get_info()
-        return bool(enterprise_info.get("IsAllowCreateWorkspace", is_allowed))
+        is_allowed = bool(enterprise_info.get("IsAllowCreateWorkspace", is_allowed))
+        return is_allowed, cls._build_license(enterprise_info).workspaces
 
     @classmethod
     def is_plugin_manager_enabled(cls) -> bool:

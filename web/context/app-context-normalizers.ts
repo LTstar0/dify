@@ -44,6 +44,7 @@ export function normalizeCurrentWorkspaceSummary(
     plan: workspace.plan,
     credits: workspace.credits,
     role: resolveWorkspaceRole(workspace.role),
+    is_owner: workspace.is_owner,
   }
 }
 
@@ -52,7 +53,7 @@ export function getWorkspaceRoleFlags(
 ): WorkspaceRoleFlags {
   return {
     isCurrentWorkspaceManager: ['owner', 'admin'].includes(currentWorkspace.role),
-    isCurrentWorkspaceOwner: currentWorkspace.role === 'owner',
+    isCurrentWorkspaceOwner: currentWorkspace.is_owner ?? currentWorkspace.role === 'owner',
     isCurrentWorkspaceEditor: ['owner', 'admin', 'editor'].includes(currentWorkspace.role),
     isCurrentWorkspaceDatasetOperator: currentWorkspace.role === 'dataset_operator',
   }

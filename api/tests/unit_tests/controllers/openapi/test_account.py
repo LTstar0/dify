@@ -3,11 +3,14 @@
 import builtins
 import sys
 import uuid
+from datetime import datetime
+from inspect import unwrap
 from types import SimpleNamespace
 
 import pytest
 from flask import Flask
 from flask.views import MethodView
+from sqlalchemy.orm import Session
 from werkzeug.exceptions import UnprocessableEntity
 
 from controllers.openapi import bp as openapi_bp
@@ -19,6 +22,8 @@ from controllers.openapi.account import (
 )
 from controllers.openapi.auth.data import AuthData
 from libs.oauth_bearer import Scope, TokenType
+from models import Account, Tenant, TenantAccountJoin
+from models.account import AccountStatus, TenantAccountRole, TenantStatus
 
 if not hasattr(builtins, "MethodView"):
     builtins.MethodView = MethodView  # type: ignore[attr-defined]
@@ -214,3 +219,96 @@ def test_sessions_list_rejects_out_of_bounds_query(app: Flask, monkeypatch: pyte
     with app.test_request_context(f"/openapi/v1/account/sessions?{query}"):
         with pytest.raises(UnprocessableEntity):
             api.get.__wrapped__(api, auth_data=_session_auth_data())
+
+
+def _account_auth_data(account_id: uuid.UUID) -> AuthData:
+    return AuthData(
+        token_type=TokenType.OAUTH_ACCOUNT,
+        account_id=account_id,
+        token_hash="testhash",
+        scopes=frozenset({Scope.FULL}),
+    )
+
+
+def _persist_identity_account(session: Session, account_id: uuid.UUID) -> Account:
+    account = Account(name="Caller", email="caller@example.com", status=AccountStatus.ACTIVE)
+    account.id = str(account_id)
+    session.add(account)
+    return account
+
+
+def _persist_membership(
+    session: Session,
+    account_id: str,
+    *,
+    name: str,
+    status: TenantStatus,
+    current: bool,
+) -> Tenant:
+    tenant = Tenant(name=name, status=status)
+    tenant.created_at = datetime(2026, 5, 18)
+    session.add(tenant)
+    session.flush()
+    session.add(
+        TenantAccountJoin(
+            tenant_id=tenant.id,
+            account_id=account_id,
+            current=current,
+            role=TenantAccountRole.OWNER,
+        )
+    )
+    return tenant
+
+
+def test_account_get_omits_archived_and_picks_remaining_normal(
+    app: Flask, monkeypatch: pytest.MonkeyPatch, sqlite_session: Session
+):
+    account_id = uuid.uuid4()
+    _persist_identity_account(sqlite_session, account_id)
+    archived = _persist_membership(
+        sqlite_session,
+        str(account_id),
+        name="Archived",
+        status=TenantStatus.ARCHIVE,
+        current=True,
+    )
+    normal = _persist_membership(
+        sqlite_session,
+        str(account_id),
+        name="Normal",
+        status=TenantStatus.NORMAL,
+        current=False,
+    )
+    sqlite_session.commit()
+    monkeypatch.setattr("controllers.openapi.account.enforce", lambda *args, **kwargs: None)
+
+    api = AccountApi()
+    with app.test_request_context("/openapi/v1/account"):
+        result = unwrap(api.get)(api, sqlite_session, auth_data=_account_auth_data(account_id))
+
+    assert {workspace.id for workspace in result.workspaces} == {normal.id}
+    assert result.default_workspace_id == normal.id
+    assert archived.id not in {workspace.id for workspace in result.workspaces}
+
+
+def test_account_get_default_is_null_when_only_membership_is_archived(
+    app: Flask, monkeypatch: pytest.MonkeyPatch, sqlite_session: Session
+):
+    account_id = uuid.uuid4()
+    _persist_identity_account(sqlite_session, account_id)
+    _persist_membership(
+        sqlite_session,
+        str(account_id),
+        name="Archived",
+        status=TenantStatus.ARCHIVE,
+        current=True,
+    )
+    sqlite_session.commit()
+    monkeypatch.setattr("controllers.openapi.account.enforce", lambda *args, **kwargs: None)
+
+    api = AccountApi()
+    with app.test_request_context("/openapi/v1/account"):
+        result = unwrap(api.get)(api, sqlite_session, auth_data=_account_auth_data(account_id))
+
+    assert result.workspaces == []
+    assert result.default_workspace_id is None

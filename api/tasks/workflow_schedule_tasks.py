@@ -39,6 +39,16 @@ def run_schedule_trigger(schedule_id: str) -> None:
         if not schedule:
             raise ScheduleNotFoundError(f"Schedule {schedule_id} not found")
 
+        from services.account_service import TenantService
+
+        if TenantService.is_tenant_archived(schedule.tenant_id, session=session):
+            logger.info(
+                "Skipping schedule %s for archived workspace %s",
+                schedule_id,
+                schedule.tenant_id,
+            )
+            return
+
         tenant_owner = ScheduleService.get_tenant_owner(schedule.tenant_id, session=session)
         if not tenant_owner:
             raise TenantOwnerNotFoundError(f"No owner or admin found for tenant {schedule.tenant_id}")

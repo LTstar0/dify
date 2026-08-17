@@ -1,6 +1,7 @@
 import type { ContractRouterClient } from '@orpc/contract'
 import type { JsonifiedClient } from '@orpc/openapi-client'
 import type { HttpClient } from './types.js'
+import { contract as allWorkspacesContract } from '@dify/contracts/api/console/all-workspaces/orpc.gen'
 import { contract } from '@dify/contracts/api/openapi/orpc.gen'
 import { createORPCClient } from '@orpc/client'
 import { OpenAPILink } from '@orpc/openapi-client/fetch'
@@ -10,6 +11,9 @@ import { classifyResponse } from './error-mapper.js'
 // Contract-typed oRPC client for the public OpenAPI surface. `JsonifiedClient` reshapes the
 // contract types to what survives JSON transport (e.g. Date -> string), matching the wire.
 export type OpenApiClient = JsonifiedClient<ContractRouterClient<typeof contract>>
+export type AllWorkspacesApiClient = JsonifiedClient<
+  ContractRouterClient<typeof allWorkspacesContract>
+>
 
 // An oRPC client routed through the CLI's HttpClient, so every call reuses the one transport
 // policy (UA+bearer, retry, timeout). Errors become the CLI's model at the two transport seams,
@@ -27,6 +31,20 @@ export function createOpenApiClient(http: HttpClient): OpenApiClient {
     },
   })
   return createORPCClient<OpenApiClient>({
+    call: (path, input, options) => link.call(path, input, options).catch(mapOrpcError),
+  })
+}
+
+export function createAllWorkspacesClient(http: HttpClient): AllWorkspacesApiClient {
+  const link = new OpenAPILink(allWorkspacesContract, {
+    url: http.baseURL,
+    fetch: async (req, init) => {
+      const res = await http.request(req, init)
+      if (!res.ok) throw await classifyResponse(req, res)
+      return res
+    },
+  })
+  return createORPCClient<AllWorkspacesApiClient>({
     call: (path, input, options) => link.call(path, input, options).catch(mapOrpcError),
   })
 }

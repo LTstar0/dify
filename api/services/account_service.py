@@ -16,7 +16,7 @@ from hashlib import sha256
 from typing import Any, NotRequired, TypedDict, cast
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
-from sqlalchemy import Row, delete, func, select, update
+from sqlalchemy import Row, delete, exists, func, select, update
 from sqlalchemy.orm import Session
 from werkzeug.exceptions import Unauthorized
 
@@ -60,6 +60,7 @@ from services.errors.account import (
     AccountLoginError,
     AccountNotLinkTenantError,
     AccountPasswordError,
+    AccountPasswordRequiredError,
     AccountRegisterError,
     CannotOperateSelfError,
     CurrentPasswordIncorrectError,
@@ -73,7 +74,15 @@ from services.errors.account import (
     SeatsLimitExceededError,
     TenantNotFoundError,
 )
-from services.errors.workspace import WorkSpaceNotAllowedCreateError, WorkspacesLimitExceededError
+from services.errors.workspace import (
+    CannotArchiveLastWorkspaceError,
+    CannotLeaveLastWorkspaceError,
+    OwnerCannotLeaveError,
+    WorkspaceAlreadyArchivedError,
+    WorkSpaceNotAllowedCreateError,
+    WorkspaceNotArchivedError,
+    WorkspacesLimitExceededError,
+)
 from services.feature_service import FeatureService
 from services.plugin.plugin_auto_upgrade_service import PluginAutoUpgradeService
 from services.telemetry_service import CommunityTelemetryService
@@ -505,6 +514,37 @@ class AccountService:
         session.add(account)
         session.commit()
         return account
+
+    @classmethod
+    def ensure_account_for_assignment(
+        cls,
+        *,
+        email: str,
+        name: str | None,
+        password: str | None,
+        language: str,
+        session: Session,
+    ) -> tuple[Account, bool]:
+        """Return an existing account or create an initialized one for assignment."""
+        normalized_email = email.lower().strip()
+        account = cls.get_account_by_email_with_case_fallback(normalized_email, session=session)
+        if account is not None:
+            return account, False
+        if not password:
+            raise AccountPasswordRequiredError("Password is required to create a new account.")
+
+        account = cls.create_account(
+            email=normalized_email,
+            name=(name or normalized_email.split("@")[0]).strip() or normalized_email.split("@")[0],
+            interface_language=get_valid_language(language),
+            password=password,
+            is_setup=True,
+            session=session,
+        )
+        account.status = AccountStatus.ACTIVE
+        account.initialized_at = naive_utc_now()
+        session.commit()
+        return account, True
 
     @staticmethod
     def create_account_and_tenant(
@@ -1401,6 +1441,51 @@ class TenantService:
         return ta
 
     @staticmethod
+    def assign_account_to_tenant(
+        tenant: Tenant,
+        account: Account,
+        role: str,
+        operator: Account | None,
+        *,
+        session: Session,
+        skip_permission_check: bool = False,
+    ) -> tuple[TenantAccountJoin, bool]:
+        """Add an account to a tenant immediately, or update their role.
+
+        Unlike invite, this does not wait for email acceptance. Owner cannot
+        be assigned here — ownership transfer stays on the existing flow.
+        """
+        if not TenantAccountRole.is_valid_role(role) or not TenantAccountRole.is_non_owner_role(
+            TenantAccountRole(role)
+        ):
+            raise InvalidActionError("Invalid role.")
+
+        if operator is not None and not skip_permission_check:
+            TenantService.check_member_permission(tenant, operator, account, "add", session=session)
+
+        join = session.scalar(
+            select(TenantAccountJoin)
+            .where(TenantAccountJoin.tenant_id == tenant.id, TenantAccountJoin.account_id == account.id)
+            .limit(1)
+        )
+        if join is None:
+            had_workspace = bool(TenantService.get_join_tenants(account, session=session))
+            join = TenantService.create_tenant_member(tenant, account, session, role)
+            if not had_workspace:
+                TenantService.switch_tenant(account, tenant.id, session=session)
+            return join, True
+
+        if str(join.role) == TenantAccountRole.OWNER:
+            raise InvalidActionError("Cannot change the owner role here.")
+
+        if str(join.role) != role:
+            if operator is not None and not skip_permission_check:
+                TenantService.check_member_permission(tenant, operator, account, "update", session=session)
+            join.role = TenantAccountRole(role)
+            session.commit()
+        return join, False
+
+    @staticmethod
     def get_join_tenants(account: Account, *, session: Session) -> list[Tenant]:
         """Get account join tenants"""
         return list(
@@ -1412,28 +1497,31 @@ class TenantService:
         )
 
     @staticmethod
-    def get_account_memberships(account_id: str, *, session: Session) -> list[Row[tuple[TenantAccountJoin, Tenant]]]:
+    def get_account_memberships(
+        account_id: str, *, session: Session, status: TenantStatus | None = TenantStatus.NORMAL
+    ) -> list[Row[tuple[TenantAccountJoin, Tenant]]]:
         """Return ``(TenantAccountJoin, Tenant)`` rows for every workspace
         the account belongs to. Unlike :meth:`get_join_tenants` this keeps
         the join row so callers can read ``role``/``current`` alongside the
         tenant — used by ``/openapi/v1/account`` to render workspace
         membership + pick the default workspace.
 
-        ``session`` is injected by the caller so this service stays free
-        of a Flask-scoped session import.
-
-        No tenant-status filter: parity with the legacy controller query
-        (the openapi identity endpoint listed all joined tenants).
+        ``status`` defaults to ``NORMAL`` so archived workspaces cannot become
+        ``default_workspace_id``. Pass ``None`` for an unfiltered internal read.
         """
-        return (
+        query = (
             session.query(TenantAccountJoin, Tenant)
             .join(Tenant, Tenant.id == TenantAccountJoin.tenant_id)
             .filter(TenantAccountJoin.account_id == account_id)
-            .all()
         )
+        if status is not None:
+            query = query.filter(Tenant.status == status)
+        return query.all()
 
     @staticmethod
-    def get_workspaces_for_account(account_id: str, *, session: Session) -> list[Row[tuple[Tenant, TenantAccountJoin]]]:
+    def get_workspaces_for_account(
+        account_id: str, *, session: Session, status: TenantStatus | None = TenantStatus.NORMAL
+    ) -> list[Row[tuple[Tenant, TenantAccountJoin]]]:
         """``(Tenant, TenantAccountJoin)`` rows for every workspace the
         account belongs to, ordered by ``Tenant.created_at`` ASC — the
         canonical ordering for ``/openapi/v1/workspaces``.
@@ -1441,15 +1529,18 @@ class TenantService:
         Distinct from :meth:`get_account_memberships`: tuple order is
         flipped (tenant first) and rows are sorted, so the workspace
         listing is stable across requests.
+
+        ``status`` defaults to ``NORMAL``. Pass ``None`` to include archived.
         """
-        return list(
-            session.execute(
-                select(Tenant, TenantAccountJoin)
-                .join(TenantAccountJoin, TenantAccountJoin.tenant_id == Tenant.id)
-                .where(TenantAccountJoin.account_id == account_id)
-                .order_by(Tenant.created_at.asc())
-            ).all()
+        stmt = (
+            select(Tenant, TenantAccountJoin)
+            .join(TenantAccountJoin, TenantAccountJoin.tenant_id == Tenant.id)
+            .where(TenantAccountJoin.account_id == account_id)
+            .order_by(Tenant.created_at.asc())
         )
+        if status is not None:
+            stmt = stmt.where(Tenant.status == status)
+        return list(session.execute(stmt).all())
 
     @staticmethod
     def account_belongs_to_tenant(account_id: uuid.UUID | str | None, tenant_id: str, *, session: Session) -> bool:
@@ -1541,6 +1632,7 @@ class TenantService:
             .where(
                 Tenant.id == workspace_id,
                 TenantAccountJoin.account_id == account_id,
+                Tenant.status == TenantStatus.NORMAL,
             )
         ).first()
 
@@ -1757,96 +1849,9 @@ class TenantService:
             raise CannotOperateSelfError("Cannot operate self.")
 
         TenantService.check_member_permission(tenant, operator, account, "remove", session=session)
-
-        ta = session.scalar(
-            select(TenantAccountJoin)
-            .where(TenantAccountJoin.tenant_id == tenant.id, TenantAccountJoin.account_id == account.id)
-            .limit(1)
+        TenantService._detach_membership(
+            tenant, account, session=session, source="workspace_member_removed", actor=operator
         )
-        if not ta:
-            raise MemberNotInTenantError("Member not in tenant.")
-
-        # Capture identifiers before any deletions; attribute access on the ORM
-        # object may fail after commit() expires the instance.
-        account_id = account.id
-        account_email = account.email
-
-        owner_id: str | None
-        if dify_config.RBAC_ENABLED:
-            owner_id = AccountService.get_rbac_workspace_owner_account_id(
-                str(tenant.id), str(operator.id), session=session
-            )
-        else:
-            owner_id = session.scalar(
-                select(TenantAccountJoin.account_id)
-                .where(
-                    TenantAccountJoin.tenant_id == tenant.id,
-                    TenantAccountJoin.role == TenantAccountRole.OWNER,
-                )
-                .limit(1)
-            )
-        if owner_id is None:
-            raise ValueError(f"Workspace owner not found for tenant {tenant.id}.")
-
-        session.execute(
-            update(App)
-            .where(
-                App.tenant_id == tenant.id,
-                App.maintainer == account_id,
-            )
-            .values(maintainer=owner_id)
-        )
-        session.execute(
-            update(Dataset)
-            .where(
-                Dataset.tenant_id == tenant.id,
-                Dataset.maintainer == account_id,
-            )
-            .values(maintainer=owner_id)
-        )
-        session.delete(ta)
-
-        # Clean up orphaned pending accounts (invited but never activated)
-        should_delete_account = False
-        if account.status == AccountStatus.PENDING:
-            # autoflush flushes ta deletion before this query, so 0 means no remaining joins
-            remaining_joins = (
-                session.scalar(
-                    select(func.count(TenantAccountJoin.id)).where(TenantAccountJoin.account_id == account_id)
-                )
-                or 0
-            )
-            if remaining_joins == 0:
-                session.delete(account)
-                should_delete_account = True
-
-        session.commit()
-
-        if should_delete_account:
-            logger.info(
-                "Deleted orphaned pending account: account_id=%s, email=%s",
-                account_id,
-                account_email,
-            )
-
-        if dify_config.DEPLOYMENT_EDITION == DeploymentEdition.CLOUD:
-            BillingService.clean_billing_info_cache(tenant.id)
-
-        # Queue account deletion sync task for enterprise backend to reassign resources (enterprise only)
-        from services.enterprise.account_deletion_sync import sync_workspace_member_removal
-
-        sync_success = sync_workspace_member_removal(
-            workspace_id=tenant.id, member_id=account_id, source="workspace_member_removed"
-        )
-        if not sync_success:
-            logger.warning(
-                "Enterprise workspace member removal sync failed: workspace_id=%s, member_id=%s",
-                tenant.id,
-                account_id,
-            )
-
-        if dify_config.RBAC_ENABLED:
-            RBACService.MemberRoles.delete_rbac_bindings(tenant_id=tenant.id, account_id=account_id)
 
     @staticmethod
     def update_member_role(tenant: Tenant, member: Account, new_role: str, operator: Account, *, session: Session):
@@ -1927,6 +1932,245 @@ class TenantService:
     def is_member(account: Account, tenant: Tenant, *, session: Session) -> bool:
         """Check if the account is a member of the tenant"""
         return TenantService.get_user_role(account, tenant, session=session) is not None
+
+    @staticmethod
+    def is_tenant_archived(tenant_id: str, *, session: Session | None = None) -> bool:
+        """True when the tenant is missing or already archived."""
+
+        def _check(owned: Session) -> bool:
+            tenant = owned.get(Tenant, tenant_id)
+            return tenant is None or tenant.status == TenantStatus.ARCHIVE
+
+        if session is not None:
+            return _check(session)
+        with Session(db.engine, expire_on_commit=False) as owned:
+            return _check(owned)
+
+    @staticmethod
+    def is_workspace_owner(account: Account, tenant: Tenant, *, session: Session) -> bool:
+        """True when join.role is owner, or RBAC marks the account as workspace owner."""
+        if TenantService.is_owner(account, tenant, session=session):
+            return True
+        if not dify_config.RBAC_ENABLED:
+            return False
+        return AccountService.is_rbac_workspace_owner(str(tenant.id), str(account.id), str(account.id), session=session)
+
+    @staticmethod
+    def count_normal_memberships(account_id: str, *, session: Session) -> int:
+        return (
+            session.scalar(
+                select(func.count(TenantAccountJoin.id))
+                .join(Tenant, TenantAccountJoin.tenant_id == Tenant.id)
+                .where(
+                    TenantAccountJoin.account_id == account_id,
+                    Tenant.status == TenantStatus.NORMAL,
+                )
+            )
+            or 0
+        )
+
+    @staticmethod
+    def has_member_without_other_normal_workspace(tenant_id: str, *, session: Session) -> bool:
+        member = TenantAccountJoin
+        other = TenantAccountJoin.__table__.alias("other_membership")
+        other_tenant = Tenant.__table__.alias("other_tenant")
+        stmt = (
+            select(member.id)
+            .where(member.tenant_id == tenant_id)
+            .where(
+                ~exists(
+                    select(other.c.id)
+                    .select_from(other.join(other_tenant, other_tenant.c.id == other.c.tenant_id))
+                    .where(
+                        other.c.account_id == member.account_id,
+                        other.c.tenant_id != tenant_id,
+                        other_tenant.c.status == TenantStatus.NORMAL,
+                    )
+                )
+            )
+            .limit(1)
+        )
+        return session.scalar(stmt) is not None
+
+    @staticmethod
+    def _next_normal_membership(account_id: str, excluded_tenant_id: str, *, session: Session) -> Tenant | None:
+        row = session.execute(
+            select(Tenant)
+            .join(TenantAccountJoin, TenantAccountJoin.tenant_id == Tenant.id)
+            .where(
+                TenantAccountJoin.account_id == account_id,
+                TenantAccountJoin.tenant_id != excluded_tenant_id,
+                Tenant.status == TenantStatus.NORMAL,
+            )
+            .order_by(TenantAccountJoin.id.asc())
+            .limit(1)
+        ).scalar_one_or_none()
+        return row
+
+    @staticmethod
+    def _lifecycle_locks(account_ids: list[str]):
+        from contextlib import ExitStack
+
+        stack = ExitStack()
+        for account_id in sorted(account_ids):
+            stack.enter_context(redis_client.lock(f"workspace_lifecycle:{account_id}", timeout=60))
+        return stack
+
+    @staticmethod
+    def _detach_membership(
+        tenant: Tenant, account: Account, *, session: Session, source: str, actor: Account | None = None
+    ) -> None:
+        ta = session.scalar(
+            select(TenantAccountJoin)
+            .where(TenantAccountJoin.tenant_id == tenant.id, TenantAccountJoin.account_id == account.id)
+            .limit(1)
+        )
+        if not ta:
+            raise MemberNotInTenantError("Member not in tenant.")
+
+        account_id = account.id
+        account_email = account.email
+
+        owner_id: str | None
+        if dify_config.RBAC_ENABLED:
+            owner_id = AccountService.get_rbac_workspace_owner_account_id(
+                str(tenant.id), str((actor or account).id), session=session
+            )
+        else:
+            owner_id = session.scalar(
+                select(TenantAccountJoin.account_id)
+                .where(
+                    TenantAccountJoin.tenant_id == tenant.id,
+                    TenantAccountJoin.role == TenantAccountRole.OWNER,
+                )
+                .limit(1)
+            )
+        if owner_id is None:
+            raise ValueError(f"Workspace owner not found for tenant {tenant.id}.")
+
+        session.execute(
+            update(App)
+            .where(
+                App.tenant_id == tenant.id,
+                App.maintainer == account_id,
+            )
+            .values(maintainer=owner_id)
+        )
+        session.execute(
+            update(Dataset)
+            .where(
+                Dataset.tenant_id == tenant.id,
+                Dataset.maintainer == account_id,
+            )
+            .values(maintainer=owner_id)
+        )
+        session.delete(ta)
+
+        should_delete_account = False
+        if account.status == AccountStatus.PENDING:
+            remaining_joins = (
+                session.scalar(
+                    select(func.count(TenantAccountJoin.id)).where(TenantAccountJoin.account_id == account_id)
+                )
+                or 0
+            )
+            if remaining_joins == 0:
+                session.delete(account)
+                should_delete_account = True
+
+        session.commit()
+
+        if should_delete_account:
+            logger.info(
+                "Deleted orphaned pending account: account_id=%s, email=%s",
+                account_id,
+                account_email,
+            )
+
+        if dify_config.DEPLOYMENT_EDITION == DeploymentEdition.CLOUD:
+            BillingService.clean_billing_info_cache(tenant.id)
+
+        from services.enterprise.account_deletion_sync import sync_workspace_member_removal
+
+        sync_success = sync_workspace_member_removal(workspace_id=tenant.id, member_id=account_id, source=source)
+        if not sync_success:
+            logger.warning(
+                "Enterprise workspace member removal sync failed: workspace_id=%s, member_id=%s",
+                tenant.id,
+                account_id,
+            )
+
+        if dify_config.RBAC_ENABLED:
+            RBACService.MemberRoles.delete_rbac_bindings(tenant_id=tenant.id, account_id=account_id)
+
+    @staticmethod
+    def archive_tenant(
+        tenant: Tenant,
+        operator: Account | None,
+        *,
+        session: Session,
+        allow_members_without_other_workspace: bool = False,
+    ) -> Tenant | None:
+        """Set status=ARCHIVE. Next workspace matches load_user (Join.id.asc())."""
+        member_ids = list(
+            session.scalars(
+                select(TenantAccountJoin.account_id)
+                .where(TenantAccountJoin.tenant_id == tenant.id)
+                .order_by(TenantAccountJoin.account_id.asc())
+            ).all()
+        )
+        with TenantService._lifecycle_locks(member_ids):
+            tenant = session.get(Tenant, tenant.id) or tenant
+            if tenant.status == TenantStatus.ARCHIVE:
+                raise WorkspaceAlreadyArchivedError()
+            if not allow_members_without_other_workspace and TenantService.has_member_without_other_normal_workspace(
+                tenant.id, session=session
+            ):
+                raise CannotArchiveLastWorkspaceError()
+
+            tenant.status = TenantStatus.ARCHIVE
+            next_tenant = (
+                TenantService._next_normal_membership(operator.id, tenant.id, session=session)
+                if operator is not None
+                else None
+            )
+            if operator is not None and next_tenant is not None:
+                TenantService.switch_tenant(operator, next_tenant.id, session=session)
+            else:
+                session.commit()
+            logger.info(
+                "workspace_archived account_id=%s tenant_id=%s source=%s",
+                operator.id if operator else None,
+                tenant.id,
+                "admin" if allow_members_without_other_workspace else "console",
+            )
+            return next_tenant
+
+    @staticmethod
+    def unarchive_tenant(tenant: Tenant, *, session: Session) -> None:
+        if tenant.status != TenantStatus.ARCHIVE:
+            raise WorkspaceNotArchivedError()
+        if not FeatureService.get_license().workspaces.is_available():
+            raise WorkspacesLimitExceededError()
+        tenant.status = TenantStatus.NORMAL
+        session.commit()
+        logger.info("workspace_unarchived tenant_id=%s", tenant.id)
+
+    @staticmethod
+    def leave_tenant(tenant: Tenant, account: Account, *, session: Session) -> Tenant | None:
+        """Self-remove. Next workspace order matches load_user."""
+        with redis_client.lock(f"workspace_lifecycle:{account.id}", timeout=60):
+            if TenantService.is_workspace_owner(account, tenant, session=session):
+                raise OwnerCannotLeaveError()
+            if TenantService.count_normal_memberships(account.id, session=session) <= 1:
+                raise CannotLeaveLastWorkspaceError()
+
+            next_tenant = TenantService._next_normal_membership(account.id, tenant.id, session=session)
+            TenantService._detach_membership(tenant, account, session=session, source="workspace_member_left")
+            if next_tenant is not None:
+                TenantService.switch_tenant(account, next_tenant.id, session=session)
+            logger.info("workspace_left account_id=%s tenant_id=%s", account.id, tenant.id)
+            return next_tenant
 
 
 class RegisterService:

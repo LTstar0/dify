@@ -23,27 +23,48 @@ from controllers.common.errors import (
     UnsupportedFileTypeError,
 )
 from controllers.console import console_ns
-from controllers.console.error import AccountNotLinkTenantError
-from controllers.console.workspace.error import CurrentWorkspaceArchivedError
+from controllers.console.error import AccountNotLinkTenantError, NotAllowedCreateWorkspace, WorkspacesLimitExceeded
+from controllers.console.workspace.error import (
+    CannotArchiveLastWorkspaceError,
+    CurrentWorkspaceArchivedError,
+    OwnerAccountNotFoundError,
+    OwnerCannotLeaveError,
+    WorkspaceNotFoundError,
+    WorkspaceNotOwnerError,
+)
 from controllers.console.workspace.workspace import (
+    AdminUnarchiveWorkspaceApi,
+    AdminWorkspaceInfoApi,
+    ArchivedWorkspaceListApi,
+    ArchiveWorkspaceApi,
     CurrentWorkspaceSummaryApi,
     CustomConfigWorkspaceApi,
+    LeaveWorkspaceApi,
     SwitchWorkspaceApi,
     TenantInfoResponse,
     TenantListApi,
+    UnarchiveWorkspaceApi,
     WebappLogoWorkspaceApi,
     WorkspaceInfoApi,
     WorkspaceListApi,
     WorkspaceLogoUploadResponse,
     WorkspacePermissionApi,
     WorkspacePermissionResponse,
+    WorkspacePolicyApi,
 )
 from enums import CloudPlan, DeploymentEdition
 from libs.datetime_utils import naive_utc_now
 from machinery.context import RequestContext
-from models.account import Account, Tenant, TenantAccountJoin, TenantCustomConfigDict, TenantStatus
+from models.account import Account, Tenant, TenantAccountJoin, TenantAccountRole, TenantCustomConfigDict, TenantStatus
 from repositories.workspace_query_repository import WorkspaceQueryRepository
 from services import workspace_plan_gateway
+from services.errors.workspace import (
+    CannotArchiveLastWorkspaceError as CannotArchiveLastWorkspaceServiceError,
+)
+from services.errors.workspace import (
+    OwnerCannotLeaveError as OwnerCannotLeaveServiceError,
+)
+from services.errors.workspace import WorkSpaceNotAllowedCreateError, WorkspacesLimitExceededError
 from services.workspace_query_service import WorkspaceQueryService, WorkspaceRecord
 
 
@@ -146,10 +167,12 @@ class TestTenantListApi:
         workspace_queries = WorkspaceQueryService(workspaces=workspaces, plans=plans)
         application_services_mock = SimpleNamespace(workspace_queries=workspace_queries)
 
+        session = MagicMock()
+        session.get.return_value = None
         with patch(
             "controllers.console.workspace.workspace.application_services", return_value=application_services_mock
         ):
-            result, status = method(api, request_context=request_context)
+            result, status = method(api, session, request_context)
 
         assert status == HTTPStatus.OK
         assert result == {
@@ -162,6 +185,8 @@ class TestTenantListApi:
                     "created_at": int(created_at.timestamp()),
                     "last_opened_at": int(last_opened_at.timestamp()),
                     "current": True,
+                    "role": None,
+                    "is_owner": False,
                 },
                 {
                     "id": "workspace-2",
@@ -171,11 +196,103 @@ class TestTenantListApi:
                     "created_at": int(created_at.timestamp()),
                     "last_opened_at": None,
                     "current": False,
+                    "role": None,
+                    "is_owner": False,
                 },
             ]
         }
         workspaces.list_for_account.assert_called_once_with("account-1")
         plans.resolve_many.assert_called_once_with(["workspace-1", "workspace-2"])
+
+    def test_post_creates_and_switches(self, app: Flask):
+        api = TenantListApi()
+        method = unwrap(api.post)
+        user = make_account()
+        tenant = make_tenant("new-workspace", name="Team Space")
+        session = MagicMock()
+        lock = MagicMock()
+        lock.__enter__ = MagicMock(return_value=lock)
+        lock.__exit__ = MagicMock(return_value=False)
+
+        with (
+            app.test_request_context("/workspaces", json={"name": "  Team Space  "}),
+            patch("controllers.console.workspace.workspace.redis_client.lock", return_value=lock),
+            patch(
+                "controllers.console.workspace.workspace.TenantService.create_owner_tenant",
+                return_value=tenant,
+            ) as create_owner_tenant,
+            patch("controllers.console.workspace.workspace.TenantService.switch_tenant") as switch_tenant,
+            patch(
+                "controllers.console.workspace.workspace.WorkspaceService.get_tenant_info",
+                return_value={"id": tenant.id, "name": tenant.name},
+            ),
+        ):
+            result, status = method(api, session, user)
+
+        assert status == HTTPStatus.CREATED
+        assert result["result"] == "success"
+        assert result["new_tenant"]["id"] == tenant.id
+        create_owner_tenant.assert_called_once_with(user, name="Team Space", session=session)
+        switch_tenant.assert_called_once_with(user, tenant.id, session=session)
+
+    def test_post_not_allowed(self, app: Flask):
+        api = TenantListApi()
+        method = unwrap(api.post)
+        lock = MagicMock()
+        lock.__enter__ = MagicMock(return_value=lock)
+        lock.__exit__ = MagicMock(return_value=False)
+
+        with (
+            app.test_request_context("/workspaces", json={"name": "Denied"}),
+            patch("controllers.console.workspace.workspace.redis_client.lock", return_value=lock),
+            patch(
+                "controllers.console.workspace.workspace.TenantService.create_owner_tenant",
+                side_effect=WorkSpaceNotAllowedCreateError(),
+            ),
+        ):
+            with pytest.raises(NotAllowedCreateWorkspace):
+                method(api, MagicMock(), make_account())
+
+    def test_post_limit_exceeded(self, app: Flask):
+        api = TenantListApi()
+        method = unwrap(api.post)
+        lock = MagicMock()
+        lock.__enter__ = MagicMock(return_value=lock)
+        lock.__exit__ = MagicMock(return_value=False)
+
+        with (
+            app.test_request_context("/workspaces", json={"name": "Overflow"}),
+            patch("controllers.console.workspace.workspace.redis_client.lock", return_value=lock),
+            patch(
+                "controllers.console.workspace.workspace.TenantService.create_owner_tenant",
+                side_effect=WorkspacesLimitExceededError(),
+            ),
+        ):
+            with pytest.raises(WorkspacesLimitExceeded):
+                method(api, MagicMock(), make_account())
+
+
+class TestWorkspacePolicyApi:
+    def test_get_returns_policy(self, app: Flask):
+        api = WorkspacePolicyApi()
+        method = unwrap(api.get)
+        quota = SimpleNamespace(enabled=True, size=2, limit=5)
+
+        with (
+            app.test_request_context("/workspaces/policy"),
+            patch(
+                "controllers.console.workspace.workspace.FeatureService.get_workspace_creation_policy",
+                return_value=(True, quota),
+            ) as get_policy,
+        ):
+            result, status = method(api)
+
+        assert status == HTTPStatus.OK
+        assert result == {
+            "is_allow_create_workspace": True,
+            "workspaces": {"enabled": True, "size": 2, "limit": 5},
+        }
+        get_policy.assert_called_once_with()
 
 
 class TestWorkspaceQueryRepository:
@@ -206,7 +323,8 @@ class TestWorkspaceQueryRepository:
         )
         workspace_session.commit()
 
-        result = WorkspaceQueryRepository(workspace_session.session_factory).list_for_account("account-1")
+        repository = WorkspaceQueryRepository(workspace_session.session_factory)
+        result = repository.list_for_account("account-1")
 
         assert result == (
             WorkspaceRecord(
@@ -215,6 +333,7 @@ class TestWorkspaceQueryRepository:
                 status=TenantStatus.NORMAL.value,
                 created_at=earlier.created_at,
                 last_opened_at=last_opened_at,
+                role=TenantAccountRole.NORMAL.value,
             ),
             WorkspaceRecord(
                 id=later.id,
@@ -222,6 +341,17 @@ class TestWorkspaceQueryRepository:
                 status=TenantStatus.NORMAL.value,
                 created_at=later.created_at,
                 last_opened_at=None,
+                role=TenantAccountRole.NORMAL.value,
+            ),
+        )
+        assert repository.list_archived_for_account("account-1") == (
+            WorkspaceRecord(
+                id=archived.id,
+                name=archived.name,
+                status=TenantStatus.ARCHIVE.value,
+                created_at=archived.created_at,
+                last_opened_at=None,
+                role=TenantAccountRole.NORMAL.value,
             ),
         )
 
@@ -299,33 +429,157 @@ class TestDeploymentWorkspacePlanGateway:
         get_features.assert_not_called()
 
 
+def seed_operator_workspaces(workspace_session: scoped_session[Session]) -> dict[str, Tenant]:
+    now = naive_utc_now()
+    alpha = make_tenant("alpha", name="Alpha Team")
+    alpha.created_at = now
+    beta = make_tenant("beta", name="Beta Lab", status=TenantStatus.ARCHIVE)
+    beta.created_at = now - timedelta(hours=1)
+    alpha_archive = make_tenant("alpha-archive", name="Alpha Archive", status=TenantStatus.ARCHIVE)
+    alpha_archive.created_at = now - timedelta(hours=2)
+    workspace_session.add_all(
+        [
+            alpha,
+            beta,
+            alpha_archive,
+            TenantAccountJoin(tenant_id=alpha.id, account_id="u1"),
+            TenantAccountJoin(tenant_id=alpha.id, account_id="u2"),
+            TenantAccountJoin(tenant_id=beta.id, account_id="u1"),
+        ]
+    )
+    workspace_session.commit()
+    return {"alpha": alpha, "beta": beta, "alpha_archive": alpha_archive}
+
+
 class TestWorkspaceListApi:
-    def test_get_success(self, app: Flask):
+    def test_get_includes_member_count_and_newest_first(self, app: Flask, workspace_session: scoped_session[Session]):
+        tenants = seed_operator_workspaces(workspace_session)
         api = WorkspaceListApi()
         method = unwrap(api.get)
-        tenant = make_tenant("t1", name="T")
-        paginate_result = MagicMock(items=[tenant], has_next=False, total=1)
-        with (
-            app.test_request_context("/all-workspaces", query_string={"page": 1, "limit": 20}),
-            patch("controllers.console.workspace.workspace.paginate_query", return_value=paginate_result),
+
+        with app.test_request_context("/all-workspaces", query_string={"page": 1, "limit": 20}):
+            result, status = method(api, workspace_session)
+
+        assert status == HTTPStatus.OK
+        assert result["total"] == 3
+        assert result["has_more"] is False
+        assert [item["id"] for item in result["data"]] == ["alpha", "beta", "alpha-archive"]
+        assert result["data"][0]["member_count"] == 2
+        assert result["data"][0]["name"] == tenants["alpha"].name
+        assert result["data"][1]["member_count"] == 1
+        assert result["data"][2]["member_count"] == 0
+
+    def test_get_filters_by_keyword_and_status(self, app: Flask, workspace_session: scoped_session[Session]):
+        seed_operator_workspaces(workspace_session)
+        api = WorkspaceListApi()
+        method = unwrap(api.get)
+
+        with app.test_request_context(
+            "/all-workspaces",
+            query_string={"keyword": "alpha", "status": TenantStatus.ARCHIVE.value, "page": 1, "limit": 20},
         ):
-            result, status = method(api, MagicMock())
+            result, status = method(api, workspace_session)
+
         assert status == HTTPStatus.OK
         assert result["total"] == 1
-        assert result["has_more"] is False
+        assert result["data"][0]["id"] == "alpha-archive"
+        assert result["data"][0]["status"] == TenantStatus.ARCHIVE.value
 
-    def test_get_has_next_true(self, app: Flask):
+    def test_get_has_next_true(self, app: Flask, workspace_session: scoped_session[Session]):
+        seed_operator_workspaces(workspace_session)
         api = WorkspaceListApi()
         method = unwrap(api.get)
-        tenant = make_tenant("t1", name="T")
-        paginate_result = MagicMock(items=[tenant], has_next=True, total=10)
-        with (
-            app.test_request_context("/all-workspaces", query_string={"page": 1, "limit": 1}),
-            patch("controllers.console.workspace.workspace.paginate_query", return_value=paginate_result),
-        ):
-            result, status = method(api, MagicMock())
+
+        with app.test_request_context("/all-workspaces", query_string={"page": 1, "limit": 1}):
+            result, status = method(api, workspace_session)
+
         assert status == HTTPStatus.OK
         assert result["has_more"] is True
+        assert result["total"] == 3
+        assert len(result["data"]) == 1
+
+    def test_post_creates_for_owner(self, app: Flask):
+        api = WorkspaceListApi()
+        method = unwrap(api.post)
+        owner = make_account("owner-1")
+        tenant = make_tenant("new-workspace", name="Ops Space")
+        session = MagicMock()
+        lock = MagicMock()
+        lock.__enter__ = MagicMock(return_value=lock)
+        lock.__exit__ = MagicMock(return_value=False)
+
+        with (
+            app.test_request_context(
+                "/all-workspaces",
+                json={"name": "  Ops Space  ", "owner_email": "owner-1@example.com"},
+            ),
+            patch("controllers.console.workspace.workspace.redis_client.lock", return_value=lock),
+            patch(
+                "controllers.console.workspace.workspace.AccountService.get_account_by_email_with_case_fallback",
+                return_value=owner,
+            ) as get_owner,
+            patch(
+                "controllers.console.workspace.workspace.TenantService.create_owner_tenant",
+                return_value=tenant,
+            ) as create_owner_tenant,
+        ):
+            result, status = method(api, session)
+
+        assert status == HTTPStatus.CREATED
+        assert result["result"] == "success"
+        assert result["tenant"]["id"] == tenant.id
+        assert result["tenant"]["name"] == "Ops Space"
+        get_owner.assert_called_once_with("owner-1@example.com", session=session)
+        create_owner_tenant.assert_called_once_with(
+            owner,
+            name="Ops Space",
+            is_from_dashboard=True,
+            session=session,
+        )
+
+    def test_post_owner_missing_is_404(self, app: Flask):
+        api = WorkspaceListApi()
+        method = unwrap(api.post)
+        with (
+            app.test_request_context(
+                "/all-workspaces",
+                json={"name": "Ops Space", "owner_email": "missing@example.com"},
+            ),
+            patch(
+                "controllers.console.workspace.workspace.AccountService.get_account_by_email_with_case_fallback",
+                return_value=None,
+            ),
+        ):
+            with pytest.raises(OwnerAccountNotFoundError) as exc_info:
+                method(api, MagicMock())
+
+        assert exc_info.value.code == HTTPStatus.NOT_FOUND
+        assert exc_info.value.error_code == "owner_account_not_found"
+
+    def test_post_limit_exceeded(self, app: Flask):
+        api = WorkspaceListApi()
+        method = unwrap(api.post)
+        lock = MagicMock()
+        lock.__enter__ = MagicMock(return_value=lock)
+        lock.__exit__ = MagicMock(return_value=False)
+
+        with (
+            app.test_request_context(
+                "/all-workspaces",
+                json={"name": "Overflow", "owner_email": "owner-1@example.com"},
+            ),
+            patch("controllers.console.workspace.workspace.redis_client.lock", return_value=lock),
+            patch(
+                "controllers.console.workspace.workspace.AccountService.get_account_by_email_with_case_fallback",
+                return_value=make_account("owner-1"),
+            ),
+            patch(
+                "controllers.console.workspace.workspace.TenantService.create_owner_tenant",
+                side_effect=WorkspacesLimitExceededError(),
+            ),
+        ):
+            with pytest.raises(WorkspacesLimitExceeded):
+                method(api, MagicMock())
 
 
 def test_legacy_current_workspace_routes_are_not_registered():
@@ -333,6 +587,7 @@ def test_legacy_current_workspace_routes_are_not_registered():
 
     assert "/workspaces/current" not in urls
     assert "/info" not in urls
+    assert "/all-workspaces/<uuid:workspace_id>/info" in urls
 
 
 class TestCurrentWorkspaceSummaryApi:
@@ -348,6 +603,7 @@ class TestCurrentWorkspaceSummaryApi:
             "role": "owner",
             "plan": CloudPlan.SANDBOX,
             "credits": 180,
+            "is_owner": True,
         }
 
         with (
@@ -366,6 +622,7 @@ class TestCurrentWorkspaceSummaryApi:
             "role": "owner",
             "plan": "sandbox",
             "credits": 180,
+            "is_owner": True,
         }
         get_summary.assert_called_once_with(tenant, user.id, session=session)
 
@@ -627,13 +884,13 @@ class TestWorkspaceInfoApi:
         tenant = make_tenant()
         workspace_session.add(tenant)
         workspace_session.commit()
+        user = make_account_with_tenant(tenant)
 
         payload = {"name": "New Name"}
         events = []
         with (
             app.test_request_context("/workspaces/info", json=payload),
-            patch("controllers.console.workspace.workspace.db.get_or_404", return_value=tenant),
-            patch("controllers.console.workspace.workspace.db.session", workspace_session),
+            patch("controllers.console.workspace.workspace.TenantService.is_workspace_owner", return_value=True),
             patch(
                 "controllers.console.workspace.workspace.WorkspaceService.get_tenant_info",
                 side_effect=lambda *args, **kwargs: (
@@ -643,7 +900,7 @@ class TestWorkspaceInfoApi:
         ):
             session = workspace_session()
             event.listen(session, "after_commit", lambda _session: events.append("commit"))
-            result = method(api, session, "t1")
+            result = method(api, session, user)
         assert result["result"] == "success"
         assert events == ["commit", "get_tenant_info"]
 
@@ -653,7 +910,25 @@ class TestWorkspaceInfoApi:
         payload = {"name": "X"}
         with app.test_request_context("/workspaces/info", json=payload):
             with pytest.raises(ValueError):
-                method(api, MagicMock(), None)
+                method(api, MagicMock(), make_account())
+
+    def test_post_not_owner(self, app: Flask, workspace_session: scoped_session[Session]):
+        api = WorkspaceInfoApi()
+        method = unwrap(api.post)
+        tenant = make_tenant()
+        workspace_session.add(tenant)
+        workspace_session.commit()
+        user = make_account_with_tenant(tenant)
+
+        with (
+            app.test_request_context("/workspaces/info", json={"name": "Hijack"}),
+            patch("controllers.console.workspace.workspace.TenantService.is_workspace_owner", return_value=False),
+        ):
+            with pytest.raises(WorkspaceNotOwnerError) as exc_info:
+                method(api, workspace_session(), user)
+
+        assert exc_info.value.code == HTTPStatus.FORBIDDEN
+        assert exc_info.value.error_code == "not_owner"
 
 
 class TestWorkspacePermissionApi:
@@ -680,3 +955,190 @@ class TestWorkspacePermissionApi:
         with app.test_request_context("/permission"):
             with pytest.raises(ValueError):
                 method(api, None)
+
+
+class TestArchiveWorkspaceApi:
+    def test_archives_and_switches(self, app: Flask):
+        api = ArchiveWorkspaceApi()
+        method = unwrap(api.post)
+        tenant = make_tenant("t1")
+        next_tenant = make_tenant("t2")
+        user = make_account()
+        session = MagicMock()
+        session.get.return_value = tenant
+
+        with (
+            app.test_request_context("/workspaces/archive", json={"tenant_id": "t1"}),
+            patch("controllers.console.workspace.workspace.TenantService.get_tenant_by_id", return_value=tenant),
+            patch("controllers.console.workspace.workspace.TenantService.is_workspace_owner", return_value=True),
+            patch(
+                "controllers.console.workspace.workspace.TenantService.archive_tenant",
+                return_value=next_tenant,
+            ) as archive_tenant,
+            patch(
+                "controllers.console.workspace.workspace.WorkspaceService.get_tenant_info",
+                return_value={"id": "t2"},
+            ),
+        ):
+            result = method(api, session, user)
+
+        assert result["result"] == "success"
+        assert result["switched"] is True
+        archive_tenant.assert_called_once_with(tenant, user, session=session)
+
+    def test_non_owner_is_404(self, app: Flask):
+        api = ArchiveWorkspaceApi()
+        method = unwrap(api.post)
+        tenant = make_tenant("t1")
+        with (
+            app.test_request_context("/workspaces/archive", json={"tenant_id": "t1"}),
+            patch("controllers.console.workspace.workspace.TenantService.get_tenant_by_id", return_value=tenant),
+            patch("controllers.console.workspace.workspace.TenantService.is_workspace_owner", return_value=False),
+        ):
+            with pytest.raises(WorkspaceNotFoundError):
+                method(api, MagicMock(), make_account())
+
+    def test_last_workspace_is_400(self, app: Flask):
+        api = ArchiveWorkspaceApi()
+        method = unwrap(api.post)
+        tenant = make_tenant("t1")
+        with (
+            app.test_request_context("/workspaces/archive", json={"tenant_id": "t1"}),
+            patch("controllers.console.workspace.workspace.TenantService.get_tenant_by_id", return_value=tenant),
+            patch("controllers.console.workspace.workspace.TenantService.is_workspace_owner", return_value=True),
+            patch(
+                "controllers.console.workspace.workspace.TenantService.archive_tenant",
+                side_effect=CannotArchiveLastWorkspaceServiceError(),
+            ),
+        ):
+            with pytest.raises(CannotArchiveLastWorkspaceError):
+                method(api, MagicMock(), make_account())
+
+
+class TestLeaveWorkspaceApi:
+    def test_owner_cannot_leave(self, app: Flask):
+        api = LeaveWorkspaceApi()
+        method = unwrap(api.post)
+        tenant = make_tenant("t1")
+        with (
+            app.test_request_context("/workspaces/leave", json={"tenant_id": "t1"}),
+            patch("controllers.console.workspace.workspace.TenantService.get_tenant_by_id", return_value=tenant),
+            patch("controllers.console.workspace.workspace.TenantService.is_member", return_value=True),
+            patch(
+                "controllers.console.workspace.workspace.TenantService.leave_tenant",
+                side_effect=OwnerCannotLeaveServiceError(),
+            ),
+        ):
+            with pytest.raises(OwnerCannotLeaveError):
+                method(api, MagicMock(), make_account())
+
+
+class TestUnarchiveWorkspaceApi:
+    def test_unarchives_owned_workspace(self, app: Flask):
+        api = UnarchiveWorkspaceApi()
+        method = unwrap(api.post)
+        tenant = make_tenant("t1", status=TenantStatus.ARCHIVE)
+        user = make_account()
+        session = MagicMock()
+        with (
+            app.test_request_context("/workspaces/unarchive", json={"tenant_id": "t1"}),
+            patch("controllers.console.workspace.workspace.TenantService.get_tenant_by_id", return_value=tenant),
+            patch("controllers.console.workspace.workspace.TenantService.is_workspace_owner", return_value=True),
+            patch("controllers.console.workspace.workspace.TenantService.unarchive_tenant") as unarchive,
+        ):
+            result = method(api, session, user)
+
+        assert result["result"] == "success"
+        unarchive.assert_called_once_with(tenant, session=session)
+
+    def test_non_owner_is_404(self, app: Flask):
+        api = UnarchiveWorkspaceApi()
+        method = unwrap(api.post)
+        tenant = make_tenant("t1", status=TenantStatus.ARCHIVE)
+        with (
+            app.test_request_context("/workspaces/unarchive", json={"tenant_id": "t1"}),
+            patch("controllers.console.workspace.workspace.TenantService.get_tenant_by_id", return_value=tenant),
+            patch("controllers.console.workspace.workspace.TenantService.is_workspace_owner", return_value=False),
+        ):
+            with pytest.raises(WorkspaceNotFoundError):
+                method(api, MagicMock(), make_account())
+
+
+class TestArchivedWorkspaceListApi:
+    def test_get_lists_archived_workspaces(self):
+        api = ArchivedWorkspaceListApi()
+        method = unwrap(api.get)
+        request_context = RequestContext(
+            request_id="request-1",
+            trace_id="trace-1",
+            account_id="account-1",
+            active_workspace_id="workspace-1",
+        )
+        created_at = naive_utc_now()
+        workspaces = MagicMock()
+        workspaces.list_archived_for_account.return_value = (
+            WorkspaceRecord(
+                id="workspace-3",
+                name="Archived",
+                status=TenantStatus.ARCHIVE.value,
+                created_at=created_at,
+                last_opened_at=None,
+            ),
+        )
+        plans = MagicMock()
+        plans.resolve_many.return_value = {}
+        workspace_queries = WorkspaceQueryService(workspaces=workspaces, plans=plans)
+        application_services_mock = SimpleNamespace(workspace_queries=workspace_queries)
+        session = MagicMock()
+        session.get.return_value = None
+
+        with patch(
+            "controllers.console.workspace.workspace.application_services", return_value=application_services_mock
+        ):
+            result, status = method(api, session, request_context)
+
+        assert status == HTTPStatus.OK
+        assert result["workspaces"][0]["id"] == "workspace-3"
+        assert result["workspaces"][0]["status"] == "archive"
+        workspaces.list_archived_for_account.assert_called_once_with("account-1")
+
+
+class TestAdminUnarchiveWorkspaceApi:
+    def test_unarchive_success(self, app: Flask):
+        api = AdminUnarchiveWorkspaceApi()
+        method = unwrap(api.post)
+        tenant = make_tenant("t1", status=TenantStatus.ARCHIVE)
+        with (
+            app.test_request_context("/all-workspaces/t1/unarchive"),
+            patch("controllers.console.workspace.workspace.TenantService.get_tenant_by_id", return_value=tenant),
+            patch("controllers.console.workspace.workspace.TenantService.unarchive_tenant") as unarchive,
+        ):
+            result = method(api, MagicMock(), "t1")
+
+        assert result["result"] == "success"
+        unarchive.assert_called_once()
+
+
+class TestAdminWorkspaceInfoApi:
+    def test_renames_workspace(self, app: Flask, workspace_session: scoped_session[Session]):
+        tenant = make_tenant("t1", name="Old Name")
+        workspace_session.add(tenant)
+        workspace_session.commit()
+        api = AdminWorkspaceInfoApi()
+        method = unwrap(api.post)
+
+        with app.test_request_context("/all-workspaces/t1/info", json={"name": "  New Name  "}):
+            result = method(api, workspace_session, "t1")
+
+        assert result["result"] == "success"
+        assert result["tenant"]["id"] == "t1"
+        assert result["tenant"]["name"] == "New Name"
+        assert workspace_session.get(Tenant, "t1").name == "New Name"
+
+    def test_missing_workspace_is_404(self, app: Flask, workspace_session: scoped_session[Session]):
+        api = AdminWorkspaceInfoApi()
+        method = unwrap(api.post)
+
+        with app.test_request_context("/all-workspaces/missing/info", json={"name": "New Name"}):
+            with pytest.raises(WorkspaceNotFoundError):
+                method(api, workspace_session, "missing")

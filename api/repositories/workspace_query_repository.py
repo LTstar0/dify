@@ -15,6 +15,13 @@ class WorkspaceQueryRepository(WorkspaceQuery):
 
     @override
     def list_for_account(self, account_id: str) -> tuple[WorkspaceRecord, ...]:
+        return self._list_for_account(account_id, TenantStatus.NORMAL)
+
+    @override
+    def list_archived_for_account(self, account_id: str) -> tuple[WorkspaceRecord, ...]:
+        return self._list_for_account(account_id, TenantStatus.ARCHIVE)
+
+    def _list_for_account(self, account_id: str, status: TenantStatus) -> tuple[WorkspaceRecord, ...]:
         stmt = (
             select(
                 Tenant.id,
@@ -22,11 +29,12 @@ class WorkspaceQueryRepository(WorkspaceQuery):
                 Tenant.status,
                 Tenant.created_at,
                 TenantAccountJoin.last_opened_at,
+                TenantAccountJoin.role,
             )
             .join(TenantAccountJoin, TenantAccountJoin.tenant_id == Tenant.id)
             .where(
                 TenantAccountJoin.account_id == account_id,
-                Tenant.status == TenantStatus.NORMAL,
+                Tenant.status == status,
             )
             .order_by(Tenant.created_at.asc())
         )
@@ -40,6 +48,7 @@ class WorkspaceQueryRepository(WorkspaceQuery):
                     status=status.value,
                     created_at=created_at,
                     last_opened_at=last_opened_at,
+                    role=role.value if hasattr(role, "value") else str(role),
                 )
-                for workspace_id, name, status, created_at, last_opened_at in rows
+                for workspace_id, name, status, created_at, last_opened_at, role in rows
             )

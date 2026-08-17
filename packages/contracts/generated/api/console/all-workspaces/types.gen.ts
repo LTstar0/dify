@@ -12,19 +12,69 @@ export type WorkspacePaginationResponse = {
   total: number
 }
 
+export type AdminWorkspaceCreatePayload = {
+  name: string
+  owner_email: string
+}
+
+export type WorkspaceTenantResultResponse = {
+  result: string
+  tenant: TenantInfoResponse
+}
+
+export type WorkspaceLifecycleResponse = {
+  new_tenant?: TenantInfoResponse | null
+  result: string
+  switched: boolean
+}
+
+export type WorkspaceInfoPayload = {
+  name: string
+}
+
+export type SimpleResultResponse = {
+  result: string
+}
+
 export type WorkspaceListItemResponse = {
   created_at?: number | null
   id: string
+  member_count?: number
   name?: string | null
   status?: string | null
 }
+
+export type TenantInfoResponse = {
+  created_at?: number | null
+  custom_config?: WorkspaceCustomConfigResponse | null
+  id: string
+  in_trial?: boolean | null
+  name?: string | null
+  next_credit_reset_date?: number | null
+  plan?: CloudPlan | null
+  role?: string | null
+  status?: string | null
+  trial_credits?: number | null
+  trial_credits_exhausted_at?: number | null
+  trial_credits_used?: number | null
+  trial_end_reason?: string | null
+}
+
+export type WorkspaceCustomConfigResponse = {
+  remove_webapp_brand?: boolean | null
+  replace_webapp_logo?: string | null
+}
+
+export type CloudPlan = 'professional' | 'sandbox' | 'team'
 
 export type GetAllWorkspacesData = {
   body?: never
   path?: never
   query?: {
+    keyword?: string
     limit?: number
     page?: number
+    status?: 'archive' | 'normal'
   }
   url: '/all-workspaces'
 }
@@ -34,3 +84,64 @@ export type GetAllWorkspacesResponses = {
 }
 
 export type GetAllWorkspacesResponse = GetAllWorkspacesResponses[keyof GetAllWorkspacesResponses]
+
+export type PostAllWorkspacesData = {
+  body: AdminWorkspaceCreatePayload
+  path?: never
+  query?: never
+  url: '/all-workspaces'
+}
+
+export type PostAllWorkspacesResponses = {
+  201: WorkspaceTenantResultResponse
+}
+
+export type PostAllWorkspacesResponse = PostAllWorkspacesResponses[keyof PostAllWorkspacesResponses]
+
+export type PostAllWorkspacesByWorkspaceIdArchiveData = {
+  body?: never
+  path: {
+    workspace_id: string
+  }
+  query?: never
+  url: '/all-workspaces/{workspace_id}/archive'
+}
+
+export type PostAllWorkspacesByWorkspaceIdArchiveResponses = {
+  200: WorkspaceLifecycleResponse
+}
+
+export type PostAllWorkspacesByWorkspaceIdArchiveResponse =
+  PostAllWorkspacesByWorkspaceIdArchiveResponses[keyof PostAllWorkspacesByWorkspaceIdArchiveResponses]
+
+export type PostAllWorkspacesByWorkspaceIdInfoData = {
+  body: WorkspaceInfoPayload
+  path: {
+    workspace_id: string
+  }
+  query?: never
+  url: '/all-workspaces/{workspace_id}/info'
+}
+
+export type PostAllWorkspacesByWorkspaceIdInfoResponses = {
+  200: WorkspaceTenantResultResponse
+}
+
+export type PostAllWorkspacesByWorkspaceIdInfoResponse =
+  PostAllWorkspacesByWorkspaceIdInfoResponses[keyof PostAllWorkspacesByWorkspaceIdInfoResponses]
+
+export type PostAllWorkspacesByWorkspaceIdUnarchiveData = {
+  body?: never
+  path: {
+    workspace_id: string
+  }
+  query?: never
+  url: '/all-workspaces/{workspace_id}/unarchive'
+}
+
+export type PostAllWorkspacesByWorkspaceIdUnarchiveResponses = {
+  200: SimpleResultResponse
+}
+
+export type PostAllWorkspacesByWorkspaceIdUnarchiveResponse =
+  PostAllWorkspacesByWorkspaceIdUnarchiveResponses[keyof PostAllWorkspacesByWorkspaceIdUnarchiveResponses]

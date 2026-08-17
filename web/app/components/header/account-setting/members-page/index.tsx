@@ -1,16 +1,19 @@
 'use client'
 import type { MemberInviteResponse } from '@dify/contracts/api/console/workspaces/types.gen'
+import type { WorkspaceLifecycleAction } from '@/app/components/main-nav/components/workspace-lifecycle-dialog'
 import type { Role } from '@/models/access-control'
 import type { Member } from '@/models/common'
+import { Button } from '@langgenius/dify-ui/button'
 import { toast } from '@langgenius/dify-ui/toast'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@langgenius/dify-ui/tooltip'
-import { useSuspenseQuery } from '@tanstack/react-query'
+import { useQuery, useSuspenseQuery } from '@tanstack/react-query'
 import { useAtomValue } from 'jotai'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { WorkspaceAvatar } from '@/app/components/base/workspace-avatar'
 import { NUM_INFINITE } from '@/app/components/billing/config'
 import UpgradeBtn from '@/app/components/billing/upgrade-btn'
+import { WorkspaceLifecycleDialog } from '@/app/components/main-nav/components/workspace-lifecycle-dialog'
 import { useLocale } from '@/context/i18n'
 import { workspacePermissionKeysAtom } from '@/context/permission-state'
 import { useProviderContext } from '@/context/provider-context'
@@ -19,11 +22,12 @@ import { userProfileQueryOptions } from '@/features/account-profile/client'
 import { systemFeaturesQueryOptions } from '@/features/system-features/client'
 import { getAccessControlTemplateLanguage, LanguagesSupported } from '@/i18n-config/language'
 import { useUpdateRolesOfMember } from '@/service/access-control/use-member-roles'
+import { consoleQuery } from '@/service/client'
 import { useMembers } from '@/service/use-common'
 import { hasPermission } from '@/utils/permission'
+import { AddMemberDialog } from './add-member-dialog'
 import EditWorkspaceModal from './edit-workspace-modal'
 import InviteButton from './invite-button'
-import { InviteModal } from './invite-modal'
 import InvitedModal from './invited-modal'
 import MemberDetailsModal from './member-details-modal'
 import MemberRow from './member-row'
@@ -40,10 +44,13 @@ const MembersPage = () => {
   })
   const currentWorkspace = useAtomValue(currentWorkspaceAtom)
   const isCurrentWorkspaceOwner = useAtomValue(isCurrentWorkspaceOwnerAtom)
+  const workspacesQuery = useQuery(consoleQuery.workspaces.get.queryOptions())
+  const workspaceCount = workspacesQuery.data?.workspaces.length
+  const isLastWorkspace = workspaceCount === undefined || workspaceCount === 1
   const workspacePermissionKeys = useAtomValue(workspacePermissionKeysAtom)
   const { data, refetch } = useMembers(language)
   const { data: systemFeatures } = useSuspenseQuery(systemFeaturesQueryOptions())
-  const [inviteModalVisible, setInviteModalVisible] = useState(false)
+  const [addMemberModalVisible, setAddMemberModalVisible] = useState(false)
   const [invitationResults, setInvitationResults] = useState<
     MemberInviteResponse['invitation_results'] | null
   >(null)
@@ -55,6 +62,7 @@ const MembersPage = () => {
   const [editWorkspaceModalVisible, setEditWorkspaceModalVisible] = useState(false)
   const [showTransferOwnershipModal, setShowTransferOwnershipModal] = useState(false)
   const [detailsMember, setDetailsMember] = useState<Member | null>(null)
+  const [lifecycleAction, setLifecycleAction] = useState<WorkspaceLifecycleAction | null>(null)
 
   const canManageMembers = hasPermission(workspacePermissionKeys, 'workspace.member.manage')
   const roleColumnLabel = systemFeatures.rbac_enabled
@@ -156,14 +164,31 @@ const MembersPage = () => {
             </div>
           </div>
           {isMemberFull && <UpgradeBtn className="mr-2" loc="member-invite" />}
-          <div className="shrink-0">
+          <div className="flex shrink-0 items-center gap-2">
+            {isCurrentWorkspaceOwner ? (
+              <Button
+                type="button"
+                disabled={isLastWorkspace}
+                onClick={() => setLifecycleAction('archive')}
+              >
+                {t(($) => $['mainNav.workspace.archive'], { ns: 'common' })}
+              </Button>
+            ) : (
+              <Button type="button" onClick={() => setLifecycleAction('leave')}>
+                {t(($) => $['mainNav.workspace.leave'], { ns: 'common' })}
+              </Button>
+            )}
             {canManageMembers && (
-              <InviteModal
-                open={inviteModalVisible}
+              <AddMemberDialog
+                open={addMemberModalVisible}
                 trigger={<InviteButton />}
                 isEmailSetup={systemFeatures.is_email_setup}
-                onOpenChange={setInviteModalVisible}
-                onSend={setInvitationResults}
+                onOpenChange={setAddMemberModalVisible}
+                onAssigned={() => {
+                  toast.success(t(($) => $['members.assignAccountSuccess'], { ns: 'common' }))
+                  void refetch()
+                }}
+                onInvited={setInvitationResults}
               />
             )}
           </div>
@@ -212,6 +237,13 @@ const MembersPage = () => {
           onClose={() => setShowTransferOwnershipModal(false)}
         />
       )}
+      <WorkspaceLifecycleDialog
+        action={lifecycleAction}
+        tenantId={lifecycleAction ? currentWorkspace.id : null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setLifecycleAction(null)
+        }}
+      />
       {detailsMember && (
         <MemberDetailsModal
           member={detailsMember}

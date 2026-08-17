@@ -71,6 +71,46 @@ describe('dify-mock fixture server', () => {
     expect(body.workspaces[1]?.current).toBe(false)
   })
 
+  it('POST /openapi/v1/workspaces creates a workspace', async () => {
+    const r = await fetch(`${mock.url}/openapi/v1/workspaces`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer dfoa_test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Ops' }),
+    })
+    expect(r.status).toBe(201)
+    const body = (await r.json()) as { name: string; current: boolean }
+    expect(body.name).toBe('Ops')
+    expect(body.current).toBe(true)
+  })
+
+  it('POST /openapi/v1/workspaces/:id:archive returns the next workspace', async () => {
+    const r = await fetch(
+      `${mock.url}/openapi/v1/workspaces/550e8400-e29b-41d4-a716-446655440000:archive`,
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer dfoa_test' },
+      },
+    )
+    expect(r.status).toBe(200)
+    const body = (await r.json()) as { switched: boolean; workspace: { id: string } | null }
+    expect(body.switched).toBe(true)
+    expect(body.workspace?.id).toBe('550e8400-e29b-41d4-a716-446655440001')
+  })
+
+  it('POST /openapi/v1/workspaces/:id:unarchive restores the workspace', async () => {
+    const r = await fetch(
+      `${mock.url}/openapi/v1/workspaces/550e8400-e29b-41d4-a716-446655440000:unarchive`,
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer dfoa_test' },
+      },
+    )
+    expect(r.status).toBe(200)
+    const body = (await r.json()) as { id: string; status: string }
+    expect(body.id).toBe('550e8400-e29b-41d4-a716-446655440000')
+    expect(body.status).toBe('normal')
+  })
+
   it('GET /openapi/v1/workspaces returns empty list under sso scenario', async () => {
     mock.setScenario('sso')
     const r = await fetch(`${mock.url}/openapi/v1/workspaces`, {

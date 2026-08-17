@@ -12,6 +12,7 @@ workspace membership and optional role requirements via the auth pipeline.
 from __future__ import annotations
 
 from itertools import starmap
+from typing import NoReturn
 from urllib import parse
 
 from flask_restx import Resource
@@ -22,7 +23,17 @@ from configs import dify_config
 from controllers.common.session import with_session
 from controllers.openapi import openapi_ns
 from controllers.openapi._contract import accepts, returns
-from controllers.openapi._errors import MemberLicenseExceeded, MemberLimitExceeded
+from controllers.openapi._errors import (
+    CannotArchiveLastWorkspace,
+    CannotLeaveLastWorkspace,
+    MemberLicenseExceeded,
+    MemberLimitExceeded,
+    NotAllowedCreateWorkspace,
+    OwnerCannotLeave,
+    WorkspaceAlreadyArchived,
+    WorkspaceNotArchived,
+    WorkspacesLimitExceeded,
+)
 from controllers.openapi._models import (
     MemberActionResponse,
     MemberInvitePayload,
@@ -31,12 +42,15 @@ from controllers.openapi._models import (
     MemberListResponse,
     MemberResponse,
     MemberRoleUpdatePayload,
+    WorkspaceCreatePayload,
     WorkspaceDetailResponse,
+    WorkspaceLifecycleResponse,
     WorkspaceListResponse,
     WorkspaceSummaryResponse,
 )
 from controllers.openapi.auth.composition import auth_router
 from controllers.openapi.auth.data import AuthData
+from extensions.ext_redis import redis_client
 from libs.oauth_bearer import Scope, TokenType
 from models import Account, Tenant, TenantAccountJoin
 from models.account import TenantAccountRole, TenantStatus
@@ -50,6 +64,15 @@ from services.errors.account import (
     NoPermissionError,
     RoleAlreadyAssignedError,
     SeatsLimitExceededError,
+)
+from services.errors.workspace import (
+    CannotArchiveLastWorkspaceError,
+    CannotLeaveLastWorkspaceError,
+    OwnerCannotLeaveError,
+    WorkspaceAlreadyArchivedError,
+    WorkSpaceNotAllowedCreateError,
+    WorkspaceNotArchivedError,
+    WorkspacesLimitExceededError,
 )
 from services.feature_service import FeatureService
 
@@ -91,6 +114,34 @@ def _check_member_invite_quota(tenant_id: str) -> None:
         raise MemberLicenseExceeded()
 
 
+def _map_workspace_write_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, WorkSpaceNotAllowedCreateError):
+        raise NotAllowedCreateWorkspace()
+    if isinstance(exc, WorkspacesLimitExceededError):
+        raise WorkspacesLimitExceeded()
+    if isinstance(exc, WorkspaceAlreadyArchivedError):
+        raise WorkspaceAlreadyArchived()
+    if isinstance(exc, CannotArchiveLastWorkspaceError):
+        raise CannotArchiveLastWorkspace()
+    if isinstance(exc, CannotLeaveLastWorkspaceError):
+        raise CannotLeaveLastWorkspace()
+    if isinstance(exc, OwnerCannotLeaveError):
+        raise OwnerCannotLeave()
+    if isinstance(exc, WorkspaceNotArchivedError):
+        raise WorkspaceNotArchived()
+    raise exc
+
+
+def _lifecycle_response(session: Session, account_id: object, next_tenant: Tenant | None) -> WorkspaceLifecycleResponse:
+    if next_tenant is None:
+        return WorkspaceLifecycleResponse(switched=False, workspace=None)
+    row = TenantService.find_workspace_for_account(str(account_id), next_tenant.id, session=session)
+    if row is None:
+        return WorkspaceLifecycleResponse(switched=True, workspace=None)
+    tenant, membership = row
+    return WorkspaceLifecycleResponse(switched=True, workspace=_workspace_detail(tenant, membership))
+
+
 @openapi_ns.route("/workspaces")
 class WorkspacesApi(Resource):
     @auth_router.guard(scope=Scope.WORKSPACE_READ, allowed_token_types=frozenset({TokenType.OAUTH_ACCOUNT}))
@@ -100,6 +151,25 @@ class WorkspacesApi(Resource):
         rows = TenantService.get_workspaces_for_account(str(auth_data.account_id), session=session)
 
         return WorkspaceListResponse(workspaces=list(starmap(_workspace_summary, rows)))
+
+    @auth_router.guard(scope=Scope.WORKSPACE_WRITE, allowed_token_types=frozenset({TokenType.OAUTH_ACCOUNT}))
+    @returns(201, WorkspaceDetailResponse, description="Workspace created")
+    @accepts(body=WorkspaceCreatePayload)
+    @with_session
+    def post(self, session: Session, *, auth_data: AuthData, body: WorkspaceCreatePayload):
+        account = _load_account(session, auth_data.account_id)
+        with redis_client.lock(f"workspace_create:{account.id}", timeout=60):
+            try:
+                tenant = TenantService.create_owner_tenant(account, name=body.name, session=session)
+            except Exception as exc:
+                _map_workspace_write_error(exc)
+            TenantService.switch_tenant(account, tenant.id, session=session)
+
+        row = TenantService.find_workspace_for_account(str(auth_data.account_id), tenant.id, session=session)
+        if row is None:
+            raise NotFound("workspace not found")
+        created, membership = row
+        return _workspace_detail(created, membership)
 
 
 @openapi_ns.route("/workspaces/<string:workspace_id>")
@@ -142,6 +212,61 @@ class WorkspaceSwitchApi(Resource):
             raise NotFound("workspace not found")
         tenant, membership = row
         return _workspace_detail(tenant, membership)
+
+
+@openapi_ns.route("/workspaces/<string:workspace_id>:archive")
+class WorkspaceArchiveApi(Resource):
+    @auth_router.guard_workspace(scope=Scope.WORKSPACE_WRITE, allowed_token_types=frozenset({TokenType.OAUTH_ACCOUNT}))
+    @returns(200, WorkspaceLifecycleResponse, description="Workspace archived")
+    @with_session
+    def post(self, session: Session, workspace_id: str, *, auth_data: AuthData):
+        account = _load_account(session, auth_data.account_id)
+        tenant = _load_tenant(session, workspace_id)
+        if not TenantService.is_workspace_owner(account, tenant, session=session):
+            raise NotFound("workspace not found")
+        try:
+            next_tenant = TenantService.archive_tenant(tenant, account, session=session)
+        except Exception as exc:
+            _map_workspace_write_error(exc)
+        return _lifecycle_response(session, auth_data.account_id, next_tenant)
+
+
+@openapi_ns.route("/workspaces/<string:workspace_id>:leave")
+class WorkspaceLeaveApi(Resource):
+    @auth_router.guard_workspace(scope=Scope.WORKSPACE_WRITE, allowed_token_types=frozenset({TokenType.OAUTH_ACCOUNT}))
+    @returns(200, WorkspaceLifecycleResponse, description="Left workspace")
+    @with_session
+    def post(self, session: Session, workspace_id: str, *, auth_data: AuthData):
+        account = _load_account(session, auth_data.account_id)
+        tenant = _load_tenant(session, workspace_id)
+        if not TenantService.is_member(account, tenant, session=session):
+            raise NotFound("workspace not found")
+        try:
+            next_tenant = TenantService.leave_tenant(tenant, account, session=session)
+        except Exception as exc:
+            _map_workspace_write_error(exc)
+        return _lifecycle_response(session, auth_data.account_id, next_tenant)
+
+
+@openapi_ns.route("/workspaces/<string:workspace_id>:unarchive")
+class WorkspaceUnarchiveApi(Resource):
+    @auth_router.guard(scope=Scope.WORKSPACE_WRITE, allowed_token_types=frozenset({TokenType.OAUTH_ACCOUNT}))
+    @returns(200, WorkspaceDetailResponse, description="Workspace restored")
+    @with_session
+    def post(self, session: Session, workspace_id: str, *, auth_data: AuthData):
+        account = _load_account(session, auth_data.account_id)
+        tenant = TenantService.get_tenant_by_id(workspace_id, session=session)
+        if tenant is None or not TenantService.is_workspace_owner(account, tenant, session=session):
+            raise NotFound("workspace not found")
+        try:
+            TenantService.unarchive_tenant(tenant, session=session)
+        except Exception as exc:
+            _map_workspace_write_error(exc)
+        row = TenantService.find_workspace_for_account(str(auth_data.account_id), workspace_id, session=session)
+        if row is None:
+            raise NotFound("workspace not found")
+        restored, membership = row
+        return _workspace_detail(restored, membership)
 
 
 @openapi_ns.route("/workspaces/<string:workspace_id>/members")

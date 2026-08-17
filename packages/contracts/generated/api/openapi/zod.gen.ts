@@ -422,6 +422,8 @@ export const zOpenApiErrorCode = z.enum([
   'app_unavailable',
   'bad_gateway',
   'bad_request',
+  'cannot_archive_last_workspace',
+  'cannot_leave_last_workspace',
   'completion_request_error',
   'conflict',
   'conversation_completed',
@@ -438,7 +440,9 @@ export const zOpenApiErrorCode = z.enum([
   'model_currently_not_support',
   'no_file_uploaded',
   'not_acceptable',
+  'not_allowed_create_workspace',
   'not_found',
+  'owner_cannot_leave',
   'provider_not_initialize',
   'provider_quota_exceeded',
   'rate_limit_error',
@@ -451,6 +455,9 @@ export const zOpenApiErrorCode = z.enum([
   'unsupported_file_type',
   'unsupported_media_type',
   'upgrade_required',
+  'workspace_already_archived',
+  'workspace_not_archived',
+  'workspaces_limit_exceeded',
 ])
 
 /**
@@ -644,6 +651,13 @@ export const zWorkflowRunData = z.object({
 })
 
 /**
+ * WorkspaceCreatePayload
+ */
+export const zWorkspaceCreatePayload = z.object({
+  name: z.string().min(1).max(255),
+})
+
+/**
  * WorkspaceDetailResponse
  */
 export const zWorkspaceDetailResponse = z.object({
@@ -653,6 +667,15 @@ export const zWorkspaceDetailResponse = z.object({
   name: z.string(),
   role: z.string(),
   status: z.string(),
+})
+
+/**
+ * WorkspaceLifecycleResponse
+ */
+export const zWorkspaceLifecycleResponse = z.object({
+  result: z.literal('success').optional().default('success'),
+  switched: z.boolean(),
+  workspace: zWorkspaceDetailResponse.nullish(),
 })
 
 /**
@@ -931,6 +954,13 @@ export const zGetPermittedExternalAppsByAppIdResponse = zAppDescribeResponse
  */
 export const zGetWorkspacesResponse = zWorkspaceListResponse
 
+export const zPostWorkspacesBody = zWorkspaceCreatePayload
+
+/**
+ * Workspace created
+ */
+export const zPostWorkspacesResponse = zWorkspaceDetailResponse
+
 export const zGetWorkspacesByWorkspaceIdPath = z.object({
   workspace_id: z.string(),
 })
@@ -1008,6 +1038,24 @@ export const zPatchWorkspacesByWorkspaceIdMembersByMemberIdPath = z.object({
  */
 export const zPatchWorkspacesByWorkspaceIdMembersByMemberIdResponse = zMemberActionResponse
 
+export const zPostWorkspacesByWorkspaceIdArchivePath = z.object({
+  workspace_id: z.string(),
+})
+
+/**
+ * Workspace archived
+ */
+export const zPostWorkspacesByWorkspaceIdArchiveResponse = zWorkspaceLifecycleResponse
+
+export const zPostWorkspacesByWorkspaceIdLeavePath = z.object({
+  workspace_id: z.string(),
+})
+
+/**
+ * Left workspace
+ */
+export const zPostWorkspacesByWorkspaceIdLeaveResponse = zWorkspaceLifecycleResponse
+
 export const zPostWorkspacesByWorkspaceIdSwitchPath = z.object({
   workspace_id: z.string(),
 })
@@ -1016,3 +1064,12 @@ export const zPostWorkspacesByWorkspaceIdSwitchPath = z.object({
  * Workspace detail
  */
 export const zPostWorkspacesByWorkspaceIdSwitchResponse = zWorkspaceDetailResponse
+
+export const zPostWorkspacesByWorkspaceIdUnarchivePath = z.object({
+  workspace_id: z.string(),
+})
+
+/**
+ * Workspace restored
+ */
+export const zPostWorkspacesByWorkspaceIdUnarchiveResponse = zWorkspaceDetailResponse

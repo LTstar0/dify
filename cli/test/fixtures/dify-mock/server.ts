@@ -235,6 +235,61 @@ export function buildApp(getScenario: () => Scenario, state?: MockState): Hono {
     })
   })
 
+  app.post('/openapi/v1/workspaces', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { name?: unknown }
+    const name = typeof body.name === 'string' ? body.name.trim() : ''
+    if (name === '') {
+      return c.json({ code: 'invalid_param', message: 'name is required', status: 422 }, 422)
+    }
+    return c.json(
+      {
+        id: '550e8400-e29b-41d4-a716-446655440099',
+        name,
+        role: 'owner',
+        status: 'normal',
+        current: true,
+        created_at: '2026-05-18T00:00:00Z',
+      },
+      201,
+    )
+  })
+
+  app.post('/openapi/v1/workspaces/:rest{.+}', (c) => {
+    const rest = c.req.path.replace(/^.*\/workspaces\//, '')
+    const suffix = rest.includes(':') ? rest.slice(rest.lastIndexOf(':')) : ''
+    const wsId = suffix === '' ? rest : rest.slice(0, -suffix.length)
+    const next = WORKSPACES.find((w) => w.id !== wsId)
+    const workspace = WORKSPACES.find((w) => w.id === wsId) ?? WORKSPACES[0]
+
+    if (suffix === ':unarchive') {
+      return c.json({
+        id: wsId,
+        name: workspace?.name ?? 'Restored',
+        role: workspace?.role ?? 'owner',
+        status: 'normal',
+        current: false,
+      })
+    }
+
+    if (suffix === ':archive' || suffix === ':leave') {
+      return c.json({
+        result: 'success',
+        switched: next !== undefined,
+        workspace: next
+          ? {
+              id: next.id,
+              name: next.name,
+              role: next.role,
+              status: next.status,
+              current: true,
+            }
+          : null,
+      })
+    }
+
+    return c.json({ error: { code: 'not_found', message: 'unknown workspace action' } }, 404)
+  })
+
   app.get('/openapi/v1/apps', (c) => {
     const page = Number(c.req.query('page') ?? '1')
     const limit = Number(c.req.query('limit') ?? '20')

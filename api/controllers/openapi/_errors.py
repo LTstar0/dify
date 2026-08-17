@@ -67,6 +67,13 @@ class OpenApiErrorCode(StrEnum):
     MEMBER_LICENSE_EXCEEDED = "member_license_exceeded"
     HUMAN_INPUT_FORM_NOT_FOUND = "form_not_found"
     RECIPIENT_SURFACE_MISMATCH = "recipient_surface_mismatch"
+    NOT_ALLOWED_CREATE_WORKSPACE = "not_allowed_create_workspace"
+    WORKSPACES_LIMIT_EXCEEDED = "workspaces_limit_exceeded"
+    CANNOT_ARCHIVE_LAST_WORKSPACE = "cannot_archive_last_workspace"
+    CANNOT_LEAVE_LAST_WORKSPACE = "cannot_leave_last_workspace"
+    OWNER_CANNOT_LEAVE = "owner_cannot_leave"
+    WORKSPACE_ALREADY_ARCHIVED = "workspace_already_archived"
+    WORKSPACE_NOT_ARCHIVED = "workspace_not_archived"
 
 
 class ErrorDetail(BaseModel):
@@ -256,3 +263,50 @@ class RecipientSurfaceMismatch(OpenApiError):  # noqa: N818
     error_code = OpenApiErrorCode.RECIPIENT_SURFACE_MISMATCH
     description = "This form's recipient can't be submitted via the OpenAPI surface."
     hint = "Action it through its channel (web app or console)."
+
+
+class NotAllowedCreateWorkspace(OpenApiError):  # noqa: N818
+    code = 400
+    error_code = OpenApiErrorCode.NOT_ALLOWED_CREATE_WORKSPACE
+    description = "Workspace creation is disabled."
+    hint = "Ask a system administrator to enable workspace creation."
+
+
+class WorkspacesLimitExceeded(OpenApiError):  # noqa: N818
+    code = 400
+    error_code = OpenApiErrorCode.WORKSPACES_LIMIT_EXCEEDED
+    description = "Unable to create workspace because the maximum workspace limit was exceeded."
+    hint = "Ask a system administrator to expand the workspace license."
+
+
+class CannotArchiveLastWorkspace(OpenApiError):  # noqa: N818
+    code = 400
+    error_code = OpenApiErrorCode.CANNOT_ARCHIVE_LAST_WORKSPACE
+    description = "Cannot archive this workspace because at least one member has no other active workspace."
+    hint = "Give every member another active workspace first."
+
+
+class CannotLeaveLastWorkspace(OpenApiError):  # noqa: N818
+    code = 400
+    error_code = OpenApiErrorCode.CANNOT_LEAVE_LAST_WORKSPACE
+    description = "Cannot leave the last remaining workspace."
+    hint = "Create or join another workspace before leaving."
+
+
+class OwnerCannotLeave(OpenApiError):  # noqa: N818
+    code = 400
+    error_code = OpenApiErrorCode.OWNER_CANNOT_LEAVE
+    description = "The workspace owner cannot leave. Transfer ownership first."
+    hint = "Transfer ownership in the console, then leave."
+
+
+class WorkspaceAlreadyArchived(OpenApiError):  # noqa: N818
+    code = 409
+    error_code = OpenApiErrorCode.WORKSPACE_ALREADY_ARCHIVED
+    description = "The workspace is already archived."
+
+
+class WorkspaceNotArchived(OpenApiError):  # noqa: N818
+    code = 409
+    error_code = OpenApiErrorCode.WORKSPACE_NOT_ARCHIVED
+    description = "The workspace is not archived."

@@ -237,6 +237,26 @@ class WorkspaceDetailResponse(BaseModel):
     created_at: str | None = None
 
 
+class WorkspaceCreatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("name is required")
+        return name
+
+
+class WorkspaceLifecycleResponse(BaseModel):
+    result: Literal["success"] = "success"
+    switched: bool
+    workspace: WorkspaceDetailResponse | None = None
+
+
 class DeviceCodeResponse(BaseModel):
     device_code: str
     user_code: str

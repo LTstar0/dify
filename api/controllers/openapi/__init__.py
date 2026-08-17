@@ -67,7 +67,9 @@ from controllers.openapi._models import (
     TaskStopResponse,
     UsageInfo,
     WorkflowRunData,
+    WorkspaceCreatePayload,
     WorkspaceDetailResponse,
+    WorkspaceLifecycleResponse,
     WorkspaceListResponse,
     WorkspacePayload,
     WorkspaceSummaryResponse,
@@ -92,6 +94,7 @@ register_schema_models(
     MemberRoleUpdatePayload,
     PermittedExternalAppsListQuery,
     SessionListQuery,
+    WorkspaceCreatePayload,
 )
 register_response_schema_models(
     openapi_ns,
@@ -119,6 +122,7 @@ register_response_schema_models(
     WorkspaceSummaryResponse,
     WorkspaceListResponse,
     WorkspaceDetailResponse,
+    WorkspaceLifecycleResponse,
     MemberResponse,
     MemberListResponse,
     MemberInviteResponse,

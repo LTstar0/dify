@@ -3,6 +3,20 @@
 import * as z from 'zod'
 
 /**
+ * WorkspaceCreatePayload
+ */
+export const zWorkspaceCreatePayload = z.object({
+  name: z.string().min(1).max(255),
+})
+
+/**
+ * WorkspaceTenantPayload
+ */
+export const zWorkspaceTenantPayload = z.object({
+  tenant_id: z.string(),
+})
+
+/**
  * AgentProviderResponse
  */
 export const zAgentProviderResponse = z.record(z.string(), z.unknown())
@@ -613,7 +627,7 @@ export const zWorkspaceLogoUploadResponse = z.object({
  * WorkspaceInfoPayload
  */
 export const zWorkspaceInfoPayload = z.object({
-  name: z.string(),
+  name: z.string().min(1).max(255),
 })
 
 /**
@@ -1229,9 +1243,11 @@ export const zTenantListItemResponse = z.object({
   created_at: z.int().nullish(),
   current: z.boolean(),
   id: z.string(),
+  is_owner: z.boolean().optional().default(false),
   last_opened_at: z.int().nullish(),
   name: z.string().nullish(),
   plan: zCloudPlan.nullish(),
+  role: z.string().nullish(),
   status: z.string().nullish(),
 })
 
@@ -1240,6 +1256,50 @@ export const zTenantListItemResponse = z.object({
  */
 export const zTenantListResponse = z.object({
   workspaces: z.array(zTenantListItemResponse),
+})
+
+/**
+ * TenantInfoResponse
+ */
+export const zTenantInfoResponse = z.object({
+  created_at: z.int().nullish(),
+  custom_config: zWorkspaceCustomConfigResponse.nullish(),
+  id: z.string(),
+  in_trial: z.boolean().nullish(),
+  name: z.string().nullish(),
+  next_credit_reset_date: z.int().nullish(),
+  plan: zCloudPlan.nullish(),
+  role: z.string().nullish(),
+  status: z.string().nullish(),
+  trial_credits: z.int().nullish(),
+  trial_credits_exhausted_at: z.int().nullish(),
+  trial_credits_used: z.int().nullish(),
+  trial_end_reason: z.string().nullish(),
+})
+
+/**
+ * SwitchWorkspaceResponse
+ */
+export const zSwitchWorkspaceResponse = z.object({
+  new_tenant: zTenantInfoResponse,
+  result: z.string(),
+})
+
+/**
+ * WorkspaceLifecycleResponse
+ */
+export const zWorkspaceLifecycleResponse = z.object({
+  new_tenant: zTenantInfoResponse.nullish(),
+  result: z.string(),
+  switched: z.boolean(),
+})
+
+/**
+ * WorkspaceTenantResultResponse
+ */
+export const zWorkspaceTenantResultResponse = z.object({
+  result: z.string(),
+  tenant: zTenantInfoResponse,
 })
 
 /**
@@ -1253,6 +1313,7 @@ export const zTenantAccountRole = z.enum(['admin', 'dataset_operator', 'editor',
 export const zCurrentWorkspaceSummaryResponse = z.object({
   credits: z.int().nullable(),
   id: z.string(),
+  is_owner: z.boolean().optional().default(false),
   name: z.string(),
   plan: zCloudPlan.nullable(),
   role: zTenantAccountRole,
@@ -1568,38 +1629,20 @@ export const zTriggerProviderSubscriptionListResponse = z.array(
 )
 
 /**
- * TenantInfoResponse
+ * WorkspaceQuotaResponse
  */
-export const zTenantInfoResponse = z.object({
-  created_at: z.int().nullish(),
-  custom_config: zWorkspaceCustomConfigResponse.nullish(),
-  id: z.string(),
-  in_trial: z.boolean().nullish(),
-  name: z.string().nullish(),
-  next_credit_reset_date: z.int().nullish(),
-  plan: zCloudPlan.nullish(),
-  role: z.string().nullish(),
-  status: z.string().nullish(),
-  trial_credits: z.int().nullish(),
-  trial_credits_exhausted_at: z.int().nullish(),
-  trial_credits_used: z.int().nullish(),
-  trial_end_reason: z.string().nullish(),
+export const zWorkspaceQuotaResponse = z.object({
+  enabled: z.boolean(),
+  limit: z.int(),
+  size: z.int(),
 })
 
 /**
- * WorkspaceTenantResultResponse
+ * WorkspacePolicyResponse
  */
-export const zWorkspaceTenantResultResponse = z.object({
-  result: z.string(),
-  tenant: zTenantInfoResponse,
-})
-
-/**
- * SwitchWorkspaceResponse
- */
-export const zSwitchWorkspaceResponse = z.object({
-  new_tenant: zTenantInfoResponse,
-  result: z.string(),
+export const zWorkspacePolicyResponse = z.object({
+  is_allow_create_workspace: z.boolean(),
+  workspaces: zWorkspaceQuotaResponse,
 })
 
 /**
@@ -3512,6 +3555,25 @@ export const zAccountWithRoleListResponseWritable = z.object({
  */
 export const zGetWorkspacesResponse = zTenantListResponse
 
+export const zPostWorkspacesBody = zWorkspaceCreatePayload
+
+/**
+ * Workspace created
+ */
+export const zPostWorkspacesResponse = zSwitchWorkspaceResponse
+
+export const zPostWorkspacesArchiveBody = zWorkspaceTenantPayload
+
+/**
+ * Success
+ */
+export const zPostWorkspacesArchiveResponse = zWorkspaceLifecycleResponse
+
+/**
+ * Success
+ */
+export const zGetWorkspacesArchivedResponse = zTenantListResponse
+
 export const zGetWorkspacesCurrentAgentProviderByProviderNamePath = z.object({
   provider_name: z.string(),
 })
@@ -5407,12 +5469,31 @@ export const zPostWorkspacesInfoBody = zWorkspaceInfoPayload
  */
 export const zPostWorkspacesInfoResponse = zWorkspaceTenantResultResponse
 
+export const zPostWorkspacesLeaveBody = zWorkspaceTenantPayload
+
+/**
+ * Success
+ */
+export const zPostWorkspacesLeaveResponse = zWorkspaceLifecycleResponse
+
+/**
+ * Success
+ */
+export const zGetWorkspacesPolicyResponse = zWorkspacePolicyResponse
+
 export const zPostWorkspacesSwitchBody = zSwitchWorkspacePayload
 
 /**
  * Success
  */
 export const zPostWorkspacesSwitchResponse = zSwitchWorkspaceResponse
+
+export const zPostWorkspacesUnarchiveBody = zWorkspaceTenantPayload
+
+/**
+ * Success
+ */
+export const zPostWorkspacesUnarchiveResponse = zSimpleResultResponse
 
 export const zGetWorkspacesByTenantIdModelProvidersByProviderByIconTypeByLangPath = z.object({
   icon_type: z.string(),

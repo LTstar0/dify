@@ -331,6 +331,8 @@ export type OpenApiErrorCode =
   | 'app_unavailable'
   | 'bad_gateway'
   | 'bad_request'
+  | 'cannot_archive_last_workspace'
+  | 'cannot_leave_last_workspace'
   | 'completion_request_error'
   | 'conflict'
   | 'conversation_completed'
@@ -347,7 +349,9 @@ export type OpenApiErrorCode =
   | 'model_currently_not_support'
   | 'no_file_uploaded'
   | 'not_acceptable'
+  | 'not_allowed_create_workspace'
   | 'not_found'
+  | 'owner_cannot_leave'
   | 'provider_not_initialize'
   | 'provider_quota_exceeded'
   | 'rate_limit_error'
@@ -360,6 +364,9 @@ export type OpenApiErrorCode =
   | 'unsupported_file_type'
   | 'unsupported_media_type'
   | 'upgrade_required'
+  | 'workspace_already_archived'
+  | 'workspace_not_archived'
+  | 'workspaces_limit_exceeded'
 
 export type Package = {
   plugin_unique_identifier: string
@@ -452,6 +459,10 @@ export type WorkflowRunData = {
   workflow_id: string
 }
 
+export type WorkspaceCreatePayload = {
+  name: string
+}
+
 export type WorkspaceDetailResponse = {
   created_at?: string | null
   current: boolean
@@ -459,6 +470,12 @@ export type WorkspaceDetailResponse = {
   name: string
   role: string
   status: string
+}
+
+export type WorkspaceLifecycleResponse = {
+  result?: 'success'
+  switched: boolean
+  workspace?: WorkspaceDetailResponse | null
 }
 
 export type WorkspaceListResponse = {
@@ -980,6 +997,26 @@ export type GetWorkspacesResponses = {
 
 export type GetWorkspacesResponse = GetWorkspacesResponses[keyof GetWorkspacesResponses]
 
+export type PostWorkspacesData = {
+  body: WorkspaceCreatePayload
+  path?: never
+  query?: never
+  url: '/workspaces'
+}
+
+export type PostWorkspacesErrors = {
+  422: ErrorBody
+  default: ErrorBody
+}
+
+export type PostWorkspacesError = PostWorkspacesErrors[keyof PostWorkspacesErrors]
+
+export type PostWorkspacesResponses = {
+  201: WorkspaceDetailResponse
+}
+
+export type PostWorkspacesResponse = PostWorkspacesResponses[keyof PostWorkspacesResponses]
+
 export type GetWorkspacesByWorkspaceIdData = {
   body?: never
   path: {
@@ -1154,6 +1191,52 @@ export type PatchWorkspacesByWorkspaceIdMembersByMemberIdResponses = {
 export type PatchWorkspacesByWorkspaceIdMembersByMemberIdResponse =
   PatchWorkspacesByWorkspaceIdMembersByMemberIdResponses[keyof PatchWorkspacesByWorkspaceIdMembersByMemberIdResponses]
 
+export type PostWorkspacesByWorkspaceIdArchiveData = {
+  body?: never
+  path: {
+    workspace_id: string
+  }
+  query?: never
+  url: '/workspaces/{workspace_id}:archive'
+}
+
+export type PostWorkspacesByWorkspaceIdArchiveErrors = {
+  default: ErrorBody
+}
+
+export type PostWorkspacesByWorkspaceIdArchiveError =
+  PostWorkspacesByWorkspaceIdArchiveErrors[keyof PostWorkspacesByWorkspaceIdArchiveErrors]
+
+export type PostWorkspacesByWorkspaceIdArchiveResponses = {
+  200: WorkspaceLifecycleResponse
+}
+
+export type PostWorkspacesByWorkspaceIdArchiveResponse =
+  PostWorkspacesByWorkspaceIdArchiveResponses[keyof PostWorkspacesByWorkspaceIdArchiveResponses]
+
+export type PostWorkspacesByWorkspaceIdLeaveData = {
+  body?: never
+  path: {
+    workspace_id: string
+  }
+  query?: never
+  url: '/workspaces/{workspace_id}:leave'
+}
+
+export type PostWorkspacesByWorkspaceIdLeaveErrors = {
+  default: ErrorBody
+}
+
+export type PostWorkspacesByWorkspaceIdLeaveError =
+  PostWorkspacesByWorkspaceIdLeaveErrors[keyof PostWorkspacesByWorkspaceIdLeaveErrors]
+
+export type PostWorkspacesByWorkspaceIdLeaveResponses = {
+  200: WorkspaceLifecycleResponse
+}
+
+export type PostWorkspacesByWorkspaceIdLeaveResponse =
+  PostWorkspacesByWorkspaceIdLeaveResponses[keyof PostWorkspacesByWorkspaceIdLeaveResponses]
+
 export type PostWorkspacesByWorkspaceIdSwitchData = {
   body?: never
   path: {
@@ -1176,3 +1259,26 @@ export type PostWorkspacesByWorkspaceIdSwitchResponses = {
 
 export type PostWorkspacesByWorkspaceIdSwitchResponse =
   PostWorkspacesByWorkspaceIdSwitchResponses[keyof PostWorkspacesByWorkspaceIdSwitchResponses]
+
+export type PostWorkspacesByWorkspaceIdUnarchiveData = {
+  body?: never
+  path: {
+    workspace_id: string
+  }
+  query?: never
+  url: '/workspaces/{workspace_id}:unarchive'
+}
+
+export type PostWorkspacesByWorkspaceIdUnarchiveErrors = {
+  default: ErrorBody
+}
+
+export type PostWorkspacesByWorkspaceIdUnarchiveError =
+  PostWorkspacesByWorkspaceIdUnarchiveErrors[keyof PostWorkspacesByWorkspaceIdUnarchiveErrors]
+
+export type PostWorkspacesByWorkspaceIdUnarchiveResponses = {
+  200: WorkspaceDetailResponse
+}
+
+export type PostWorkspacesByWorkspaceIdUnarchiveResponse =
+  PostWorkspacesByWorkspaceIdUnarchiveResponses[keyof PostWorkspacesByWorkspaceIdUnarchiveResponses]

@@ -9,6 +9,7 @@ import { cache } from 'react'
 import { API_PREFIX, CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '@/config'
 import { SERVER_CONSOLE_API_PREFIX } from '@/config/server'
 import { createConsoleDynamicLink } from './console-link'
+import { logOpenApiClientError } from './openapi-client-error'
 import 'server-only'
 
 export type ServerConsoleClientContext = {
@@ -76,11 +77,7 @@ function createServerConsoleOpenAPILink(contract: AnyContractRouter): ServerCons
         cache: 'no-store',
       })
     },
-    interceptors: [
-      onError((error) => {
-        console.error(error)
-      }),
-    ],
+    interceptors: [onError(logOpenApiClientError)],
   })
 }
 

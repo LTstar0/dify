@@ -2,6 +2,8 @@
 // Regenerate via `pnpm tree:gen`. Drift gated by `pnpm tree:check` in CI.
 
 import type { CommandTree } from '@/framework/registry'
+import ArchiveAllWorkspace from '@/commands/archive/all-workspace/index'
+import ArchiveWorkspace from '@/commands/archive/workspace/index'
 import AuthDevicesList from '@/commands/auth/devices/list/index'
 import AuthDevicesRevoke from '@/commands/auth/devices/revoke/index'
 import AuthList from '@/commands/auth/list/index'
@@ -13,25 +15,43 @@ import ConfigPath from '@/commands/config/path/index'
 import ConfigSet from '@/commands/config/set/index'
 import ConfigUnset from '@/commands/config/unset/index'
 import ConfigView from '@/commands/config/view/index'
+import CreateAllAccount from '@/commands/create/all-account/index'
+import CreateAllWorkspaceMember from '@/commands/create/all-workspace-member/index'
+import CreateAllWorkspace from '@/commands/create/all-workspace/index'
 import CreateMember from '@/commands/create/member/index'
+import CreateWorkspace from '@/commands/create/workspace/index'
+import DeleteAllWorkspaceMember from '@/commands/delete/all-workspace-member/index'
 import DeleteMember from '@/commands/delete/member/index'
 import DescribeApp from '@/commands/describe/app/index'
 import EnvList from '@/commands/env/list/index'
 import ExportStudioApp from '@/commands/export/studio-app/index'
+import GetAllAccounts from '@/commands/get/all-accounts/index'
+import GetAllWorkspaceMembers from '@/commands/get/all-workspace-members/index'
+import GetAllWorkspaces from '@/commands/get/all-workspaces/index'
 import GetApp from '@/commands/get/app/index'
 import GetMember from '@/commands/get/member/index'
 import GetWorkspace from '@/commands/get/workspace/index'
 import ImportStudioApp from '@/commands/import/studio-app/index'
+import LeaveWorkspace from '@/commands/leave/workspace/index'
 import ResumeApp from '@/commands/resume/app/index'
 import RunApp from '@/commands/run/app/index'
+import SetAllWorkspaceMember from '@/commands/set/all-workspace-member/index'
 import SetMember from '@/commands/set/member/index'
 import SkillsInstall from '@/commands/skills/install/index'
+import UnarchiveAllWorkspace from '@/commands/unarchive/all-workspace/index'
+import UnarchiveWorkspace from '@/commands/unarchive/workspace/index'
 import UseAccount from '@/commands/use/account/index'
 import UseHost from '@/commands/use/host/index'
 import UseWorkspace from '@/commands/use/workspace/index'
 import Version from '@/commands/version/index'
 
 export const commandTree: CommandTree = {
+  archive: {
+    subcommands: {
+      'all-workspace': { command: ArchiveAllWorkspace, subcommands: {} },
+      workspace: { command: ArchiveWorkspace, subcommands: {} },
+    },
+  },
   auth: {
     subcommands: {
       devices: {
@@ -57,11 +77,16 @@ export const commandTree: CommandTree = {
   },
   create: {
     subcommands: {
+      'all-account': { command: CreateAllAccount, subcommands: {} },
+      'all-workspace': { command: CreateAllWorkspace, subcommands: {} },
+      'all-workspace-member': { command: CreateAllWorkspaceMember, subcommands: {} },
       member: { command: CreateMember, subcommands: {} },
+      workspace: { command: CreateWorkspace, subcommands: {} },
     },
   },
   delete: {
     subcommands: {
+      'all-workspace-member': { command: DeleteAllWorkspaceMember, subcommands: {} },
       member: { command: DeleteMember, subcommands: {} },
     },
   },
@@ -82,6 +107,9 @@ export const commandTree: CommandTree = {
   },
   get: {
     subcommands: {
+      'all-accounts': { command: GetAllAccounts, subcommands: {} },
+      'all-workspace-members': { command: GetAllWorkspaceMembers, subcommands: {} },
+      'all-workspaces': { command: GetAllWorkspaces, subcommands: {} },
       app: { command: GetApp, subcommands: {} },
       member: { command: GetMember, subcommands: {} },
       workspace: { command: GetWorkspace, subcommands: {} },
@@ -90,6 +118,11 @@ export const commandTree: CommandTree = {
   import: {
     subcommands: {
       'studio-app': { command: ImportStudioApp, subcommands: {} },
+    },
+  },
+  leave: {
+    subcommands: {
+      workspace: { command: LeaveWorkspace, subcommands: {} },
     },
   },
   resume: {
@@ -104,12 +137,19 @@ export const commandTree: CommandTree = {
   },
   set: {
     subcommands: {
+      'all-workspace-member': { command: SetAllWorkspaceMember, subcommands: {} },
       member: { command: SetMember, subcommands: {} },
     },
   },
   skills: {
     subcommands: {
       install: { command: SkillsInstall, subcommands: {} },
+    },
+  },
+  unarchive: {
+    subcommands: {
+      'all-workspace': { command: UnarchiveAllWorkspace, subcommands: {} },
+      workspace: { command: UnarchiveWorkspace, subcommands: {} },
     },
   },
   use: {
